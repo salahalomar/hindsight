@@ -3,7 +3,7 @@ package sample.testapp;
 /**
  * The instrumentation target for the agent's integration tests.
  *
- * <p>This class is intentionally trivial and intentionally unaware of the agent. It exists so the
+ * <p>This class is intentionally small and intentionally unaware of the agent. It exists so the
  * agent can be exercised against a real, separately packaged application launched in its own JVM,
  * rather than against classes that happen to already be on the agent's own classpath.
  *
@@ -11,8 +11,9 @@ package sample.testapp;
  * instrument. A target inside that prefix would be silently skipped, and the test that proves
  * instrumentation works would quietly prove nothing.
  *
- * <p>{@link #greet(String)} is the method step 2 will instrument first: it takes an argument,
- * returns a value, and is called exactly once, which makes an entry/exit trace easy to eyeball.
+ * <p>The call chain is three frames deep on purpose. A single method proves that advice is applied;
+ * only nesting proves that call depth is tracked, that entries and exits stay paired, and that the
+ * buffer holds a tree rather than a list.
  */
 public final class TestApp {
 
@@ -25,6 +26,7 @@ public final class TestApp {
     }
 
     static String greet(String name) {
-        return "hello from " + name;
+        Greeting greeting = new Greeting(name);
+        return greeting.render(greeting.normalise());
     }
 }
