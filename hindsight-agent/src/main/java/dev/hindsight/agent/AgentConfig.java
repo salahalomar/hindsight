@@ -1,0 +1,82 @@
+package dev.hindsight.agent;
+
+import java.util.Properties;
+import java.util.function.Consumer;
+
+/**
+ * Everything the agent reads from {@code -Dhindsight.*} at startup.
+ *
+ * <p>Parsed once, in {@code premain}, and handed to the runtime as plain values. Nothing on the
+ * recording path ever reads a system property: property lookups are synchronised map reads, and
+ * this path runs twice per traced invocation.
+ *
+ * <p>A bad value is reported and replaced with the default rather than failing the attach. Refusing
+ * to start because a buffer size was mistyped would take down an application that was running fine
+ * a moment ago.
+ */
+public record AgentConfig(PackageScope scope, int bufferEvents, int maxDepth, boolean dump) {
+
+    public static final String PACKAGES = "hindsight.packages";
+    public static final String BUFFER_EVENTS = "hindsight.buffer.events";
+    public static final String MAX_DEPTH = "hindsight.depth.max";
+    public static final String DUMP = "hindsight.dump";
+
+    static final int DEFAULT_BUFFER_EVENTS = 1024;
+    static final int DEFAULT_MAX_DEPTH = 256;
+
+    /** Below this a buffer cannot hold a useful call tree; above it, one thread can cost megabytes. */
+    static final int MIN_BUFFER_EVENTS = 16;
+    static final int MAX_BUFFER_EVENTS = 1 << 20;
+
+    public static AgentConfig fromSystemProperties(Consumer<String> warnings) {
+        return from(System.getProperties(), warnings);
+    }
+
+    static AgentConfig from(Properties properties, Consumer<String> warnings) {
+        return new AgentConfig(
+                PackageScope.parse(properties.getProperty(PACKAGES)),
+                toPowerOfTwo(bounded(properties, BUFFER_EVENTS, DEFAULT_BUFFER_EVENTS,
+                        MIN_BUFFER_EVENTS, MAX_BUFFER_EVENTS, warnings)),
+                bounded(properties, MAX_DEPTH, DEFAULT_MAX_DEPTH, 1, Integer.MAX_VALUE, warnings),
+                Boolean.parseBoolean(properties.getProperty(DUMP)));
+    }
+
+    private static int bounded(Properties properties, String key, int fallback,
+                               int minimum, int maximum, Consumer<String> warnings) {
+        String configured = properties.getProperty(key);
+        if (configured == null) {
+            return fallback;
+        }
+        int value;
+        try {
+            value = Integer.parseInt(configured.strip());
+        } catch (NumberFormatException notANumber) {
+            warnings.accept(key + "=" + configured + " is not a number, using " + fallback);
+            return fallback;
+        }
+        if (value < minimum || value > maximum) {
+            int clamped = Math.min(Math.max(value, minimum), maximum);
+            warnings.accept(key + "=" + value + " is out of range, using " + clamped);
+            return clamped;
+        }
+        return value;
+    }
+
+    /**
+     * The ring indexes by masking rather than dividing, which requires a power of two. Rounding up
+     * gives the caller at least what they asked for.
+     */
+    private static int toPowerOfTwo(int requested) {
+        return Integer.highestOneBit(requested) == requested
+                ? requested
+                : Integer.highestOneBit(requested) << 1;
+    }
+
+    /** One line for the startup banner, so what the agent will actually do is never a guess. */
+    public String describe() {
+        return "packages=" + scope().describe()
+                + ", buffer=" + bufferEvents() + " events/thread"
+                + ", maxDepth=" + maxDepth()
+                + ", dump=" + dump();
+    }
+}
