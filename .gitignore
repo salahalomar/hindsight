@@ -1,0 +1,16 @@
+target/
+!.mvn/wrapper/maven-wrapper.properties
+.mvn/wrapper/maven-wrapper.jar
+
+*.iml
+.idea/
+.vscode/
+.classpath
+.project
+.settings/
+
+*.hstrace.json
+hs_err_pid*.log
+replay_pid*.log
+
+.DS_Store
