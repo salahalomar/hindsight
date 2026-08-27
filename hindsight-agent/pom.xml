@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>dev.hindsight</groupId>
+    <artifactId>hindsight-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>hindsight-agent</artifactId>
+  <name>hindsight-agent</name>
+  <description>The java agent: records method entry, exit and thrown exceptions into a bounded trace.</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>net.bytebuddy</groupId>
+      <artifactId>byte-buddy</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <!-- Stable jar name so the -javaagent: path in the README never goes stale on a version bump. -->
+    <finalName>hindsight-agent</finalName>
+
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <createDependencyReducedPom>false</createDependencyReducedPom>
+
+              <!--
+                Relocation is not cosmetic. A -javaagent jar is appended to the system
+                class path, so an unrelocated net.bytebuddy.** would sit in front of (or
+                collide with) the copy shipped by the host application. Mockito, Hibernate
+                and Spring all bundle Byte Buddy, so shipping ours unrelocated would break
+                real applications the moment the agent is attached.
+              -->
+              <relocations>
+                <relocation>
+                  <pattern>net.bytebuddy</pattern>
+                  <shadedPattern>dev.hindsight.shaded.bytebuddy</shadedPattern>
+                </relocation>
+              </relocations>
+
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <!-- The agent is a class-path artifact; a stray module-info would only confuse the JVM. -->
+                    <exclude>module-info.class</exclude>
+                    <exclude>META-INF/versions/*/module-info.class</exclude>
+                    <!--
+                      Byte Buddy ships its JDK 24+ ClassFile API bridge only under
+                      META-INF/versions/24/net/bytebuddy/, and the shade relocator does not
+                      rewrite paths beneath META-INF/versions. Those entries would therefore
+                      survive un-relocated: dead weight while our manifest has no
+                      Multi-Release attribute, and an immediate package collision with the
+                      host application's own Byte Buddy the moment anyone adds one. No base
+                      class references the bridge, so dropping it simply keeps Byte Buddy on
+                      its bundled (and correctly relocated) ASM back end.
+                    -->
+                    <exclude>META-INF/versions/**</exclude>
+                    <!-- Relocating classes invalidates any signature that covered them. -->
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+
+              <transformers>
+                <!--
+                  Shade rewrites the jar, so it must own the manifest. Configuring these
+                  entries on maven-jar-plugin instead is the classic way to have them
+                  silently dropped from the artifact that actually ships.
+                -->
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <manifestEntries>
+                    <Premain-Class>dev.hindsight.agent.Hindsight</Premain-Class>
+                    <Can-Retransform-Classes>true</Can-Retransform-Classes>
+                    <Can-Redefine-Classes>true</Can-Redefine-Classes>
+                    <Implementation-Title>hindsight-agent</Implementation-Title>
+                    <Implementation-Version>${project.version}</Implementation-Version>
+                  </manifestEntries>
+                </transformer>
+              </transformers>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
