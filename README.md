@@ -23,16 +23,16 @@ difficulty — is the premise of the project, not a limitation it is embarrassed
 
 ## Status
 
-**Step 2 of 8.** The agent attaches and traces one method's entry and exit through inlined Byte
-Buddy advice, with the reentrancy guard and the exclusion list already in place. The target is
-still hardcoded and nothing is written to a buffer yet.
+**Step 3 of 8.** The agent records the call tree of any package you select into a bounded
+per-thread ring buffer, and can print it as an indented tree when the outermost frame returns.
+Values are still reported by type rather than summarised.
 
 | Step | | |
 |---|---|---|
 | 1 | Agent skeleton: premain, manifest, class observation | **done** |
 | 2 | Instrument one method via Byte Buddy Advice; reentrancy guard | **done** |
-| 3 | Package-prefix filtering and a bounded per-thread ring buffer | next |
-| 4 | Value summarisation, with references never retained | |
+| 3 | Package-prefix filtering and a bounded per-thread ring buffer | **done** |
+| 4 | Value summarisation, with references never retained | next |
 | 5 | Dump-on-exception and a versioned trace schema | |
 | 6 | HTML viewer: call tree, timeline scrubber, value inspector | |
 | 7 | Overhead benchmark: throughput and p99, agent off vs on | |
@@ -44,25 +44,49 @@ Requires JDK 25. Maven is not required — the wrapper fetches it.
 
 ```bash
 ./mvnw verify
-java -javaagent:hindsight-agent/target/hindsight-agent.jar \
-     -jar hindsight-testapp/target/hindsight-testapp.jar
+```
+
+```bash
+java -Dhindsight.packages=sample.testapp -Dhindsight.dump=true -javaagent:hindsight-agent/target/hindsight-agent.jar -jar hindsight-testapp/target/hindsight-testapp.jar
 ```
 
 ```
 [hindsight] agent loaded - 0.1.0-SNAPSHOT on JVM 25.0.1
-[hindsight] tracing sample.testapp.TestApp.greet
-[hindsight] [main] -> sample.testapp.TestApp.greet(String)
-[hindsight] [main] <- sample.testapp.TestApp.greet returned String
+[hindsight] packages=sample.testapp, buffer=1024 events/thread, maxDepth=256, dump=true
 hello from testapp
-[hindsight] 1078 classes loaded since attach, 1077 excluded, 1 candidate
+[hindsight] trace for main: 8 events
+[hindsight] +  0.000ms -> sample.testapp.TestApp.main(String[])
+[hindsight] +  0.009ms   -> sample.testapp.TestApp.greet(String)
+[hindsight] +  3.470ms     -> sample.testapp.Greeting.normalise()
+[hindsight] +  3.485ms     <- sample.testapp.Greeting.normalise returned String
+[hindsight] +  3.489ms     -> sample.testapp.Greeting.render(String)
+[hindsight] +  3.619ms     <- sample.testapp.Greeting.render returned String
+[hindsight] +  3.621ms   <- sample.testapp.TestApp.greet returned String
+[hindsight] +  3.684ms <- sample.testapp.TestApp.main returned void
 ```
 
 Arguments and returns are reported by **type, not value**. Rendering a value means calling
 `toString` on an application object, which can be slow, can throw, and can have side effects; that
 needs the guarded summariser in step 4 rather than an unguarded call on the hot path.
 
-The counts cover classes loaded *after* the agent attached, so the total omits everything already
-in memory by the time `premain` runs. The single candidate is `TestApp`.
+Run it without `-Dhindsight.packages` and the agent attaches, records nothing, and says so. Nothing
+is instrumented by default — an agent that picks something sensible-looking on its own is an agent
+that surprises people in production.
+
+## Configuration
+
+All settings are `-Dhindsight.*` system properties, read once at startup. A mistyped value is
+reported and replaced with the default; the agent never refuses to start over one.
+
+| Property | Default | |
+|---|---|---|
+| `hindsight.packages` | *(none)* | Comma-separated package prefixes to record. Nothing is recorded until this is set. |
+| `hindsight.buffer.events` | `1024` | Events held per thread, rounded up to a power of two. Roughly 38KB per traced thread at the default. |
+| `hindsight.depth.max` | `256` | Call depth past which frames are counted but not stored. |
+| `hindsight.dump` | `false` | Print each completed outermost frame as a call tree. |
+
+`hindsight.packages` chooses what the agent *may* record. It never overrides the exclusion list:
+asking for `java` does not get you an instrumented `java.lang.String`.
 
 ## Layout
 
@@ -71,9 +95,10 @@ in memory by the time `premain` runs. The single candidate is `TestApp`.
 | `hindsight-agent` | The agent. Shaded, with Byte Buddy relocated. |
 | `hindsight-testapp` | A tiny application used as an instrumentation target by the tests. |
 
-Inside the agent, `dev.hindsight.agent` is the part that decides what to instrument and runs once
-at startup; `dev.hindsight.runtime` is the part that application threads call into, twice per
-traced invocation. The split is a reminder of which code is allowed to be expensive.
+Inside the agent, `dev.hindsight.agent` decides what to instrument and runs once at startup;
+`dev.hindsight.runtime` is what application threads call into, twice per traced invocation;
+`dev.hindsight.trace` renders what was recorded and runs on demand. The split is a standing
+reminder of which code is allowed to be expensive.
 
 ## Design notes
 
@@ -91,6 +116,23 @@ than a list of the agent's own packages: a list has to be maintained, and the co
 entry is a recorder that records itself. The test application therefore lives under `sample.testapp`
 — inside the excluded prefix it would be skipped silently, and the attach test would go on passing
 while proving nothing.
+
+**The buffer cannot hold an application object.** Every slot in it is a `String`, `int`, `long` or
+`byte`; values are reduced to text at capture time, by the caller, before they reach it. That turns
+"never retain a captured object" from a rule someone has to remember into a property of the type.
+It is held as parallel arrays rather than an array of event objects for the same reason — an object
+per event would mean two allocations per traced invocation, which is precisely the collection
+pressure a tool for diagnosing production has no business adding.
+
+**Buffers are `ThreadLocal` and there is no registry of them.** A registry would need weak
+references and a cleanup story, and holding strong ones would leak badly against virtual threads.
+The cost is that a dump can only ever be of the calling thread's own history — which is the right
+shape for request-scoped tracing, and if recording across threads is ever wanted it deserves a real
+design rather than a wider data structure now.
+
+**The buffer resets when the outermost instrumented frame returns**, so it means "this request"
+rather than a rolling mixture of unrelated ones. That is the property step 5 needs to dump
+something coherent when an exception escapes.
 
 **The recorder cannot record itself.** A thread-local guard is held for the duration of a recorder
 call and never across the body of the instrumented method. Closing it over the callee instead would
@@ -119,9 +161,11 @@ These are known and deliberate, not oversights:
   be compiled with `-g`. That is a stretch goal, not v1.
 - **Single-threaded request handling.** Async and reactive flows are out of scope for v1.
 - **A recording, not a replay.** Stated here, and it will be stated in the viewer.
-- **Step 2 traces a single hardcoded method.** Selecting what to instrument is step 3, and is kept
-  separate on purpose: proving that advice reaches a real method and proving that the right methods
-  are chosen are different problems, and debugging them together is worse than debugging them apart.
+- **Constructors are not traced.** Advice on a constructor is workable — arguments are readable,
+  and only `this` is unavailable before initialisation — but it doubles the instrumentation surface
+  and belongs with a step that is about widening what gets recorded, not choosing it.
+- **Every method in scope is traced, including trivial accessors.** Skipping getters would be a
+  heuristic, and a tool that silently omits frames is worse than a noisy one. Scope is the control.
 - **Argument names depend on the target.** Names are read from the target's bytecode, so an
   application compiled without `-parameters` yields `arg0`, `arg1`. The agent cannot fix that from
   outside a third-party jar.
