@@ -3,11 +3,6 @@ package dev.hindsight.agent;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -27,13 +22,12 @@ class AgentAttachIT {
     @Test
     @DisplayName("the agent attaches and reports classes it could instrument")
     void attachesAndObservesClassLoading() throws Exception {
-        Result result = run("-javaagent:" + PackagedAgent.agentJar(),
-                "-jar", PackagedAgent.applicationJar().toString());
+        ForkedJvm.Result result = ForkedJvm.runInstrumentedApplication();
 
-        assertEquals(0, result.exitCode, "the application exited abnormally:\n" + result);
-        assertTrue(result.stdout.contains("[hindsight] agent loaded"), result.toString());
+        assertEquals(0, result.exitCode(), "the application exited abnormally:\n" + result);
+        assertTrue(result.stdout().contains("[hindsight] agent loaded"), result.toString());
 
-        Matcher summary = SUMMARY.matcher(result.stdout);
+        Matcher summary = SUMMARY.matcher(result.stdout());
         assertTrue(summary.find(), "no summary line was printed:\n" + result);
         assertTrue(Long.parseLong(summary.group(3)) >= 1,
                 "the transformer ran but the JVM never offered it an application class:\n" + result);
@@ -42,36 +36,23 @@ class AgentAttachIT {
     @Test
     @DisplayName("the application's own behaviour is untouched")
     void doesNotDisturbTheApplication() throws Exception {
-        Result without = run("-jar", PackagedAgent.applicationJar().toString());
-        Result with = run("-javaagent:" + PackagedAgent.agentJar(),
-                "-jar", PackagedAgent.applicationJar().toString());
+        ForkedJvm.Result without = ForkedJvm.runBareApplication();
+        ForkedJvm.Result with = ForkedJvm.runInstrumentedApplication();
 
-        assertFalse(without.stdout.contains("[hindsight]"),
+        assertFalse(without.stdout().contains("[hindsight]"),
                 "the unattached run should know nothing about the agent");
-        assertEquals(without.exitCode, with.exitCode);
-        assertTrue(with.stdout.contains("hello from testapp"));
-        assertTrue(with.stderr.isBlank(), "the agent wrote to stderr:\n" + with);
+        assertEquals(without.exitCode(), with.exitCode());
+        assertTrue(with.stdout().contains("hello from testapp"));
     }
 
-    private static Result run(String... jvmArgs) throws IOException, InterruptedException {
-        List<String> command = new ArrayList<>();
-        command.add(PackagedAgent.javaExecutable().toString());
-        command.addAll(List.of(jvmArgs));
+    @Test
+    @DisplayName("attaching the agent writes nothing to the application's stderr")
+    void staysOffStandardError() throws Exception {
+        ForkedJvm.Result result = ForkedJvm.runInstrumentedApplication();
 
-        Process process = new ProcessBuilder(command).start();
-        String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        String stderr = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
-        if (!process.waitFor(60, TimeUnit.SECONDS)) {
-            process.destroyForcibly();
-            throw new AssertionError("the forked JVM did not exit: " + command);
-        }
-        return new Result(process.exitValue(), stdout, stderr);
-    }
-
-    private record Result(int exitCode, String stdout, String stderr) {
-        @Override
-        public String toString() {
-            return "exit=" + exitCode + "\n--- stdout ---\n" + stdout + "--- stderr ---\n" + stderr;
-        }
+        // Byte Buddy probes sun.misc.Unsafe while initialising its class injector, and on JDK 24+
+        // that probe prints a terminal-deprecation warning. An application that merely attached an
+        // agent should not start emitting warnings about the agent's dependencies.
+        assertTrue(result.stderr().isBlank(), "the agent wrote to stderr:\n" + result);
     }
 }
