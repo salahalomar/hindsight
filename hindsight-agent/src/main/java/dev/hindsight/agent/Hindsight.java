@@ -1,6 +1,16 @@
 package dev.hindsight.agent;
 
+import net.bytebuddy.agent.builder.AgentBuilder;
+import net.bytebuddy.asm.Advice;
+import net.bytebuddy.description.method.MethodDescription;
+import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.dynamic.DynamicType;
+import net.bytebuddy.matcher.ElementMatcher;
+import net.bytebuddy.matcher.ElementMatchers;
+import net.bytebuddy.utility.JavaModule;
+
 import java.lang.instrument.Instrumentation;
+import java.security.ProtectionDomain;
 
 /**
  * Agent entry point, reached through the {@code Premain-Class} manifest attribute when the JVM is
@@ -21,16 +31,112 @@ public final class Hindsight {
     /** Reported when the classes are loaded from a directory rather than the packaged jar. */
     private static final String UNPACKAGED = "(unpackaged)";
 
+    /**
+     * Byte Buddy probes {@code sun.misc.Unsafe} while initialising its class injector, and on
+     * JDK 24+ that probe prints a terminal-deprecation warning. An agent has no business writing
+     * warnings into the stderr of an application that merely attached it, and we never inject
+     * classes anyway, so the probe is switched off before Byte Buddy is touched.
+     *
+     * <p>The literal matters. Shade rewrites string constants when it relocates a package, so both
+     * this name and Byte Buddy's own copy of it become {@code dev.hindsight.shaded.bytebuddy.safe}
+     * in the packaged jar. The setting therefore reaches only the agent's private copy of the
+     * library; a host application's own Byte Buddy still reads {@code net.bytebuddy.safe} and is
+     * left exactly as it was found.
+     */
+    private static final String BYTE_BUDDY_SAFE_MODE = "net.bytebuddy.safe";
+
+    /*
+     * Step 2 scaffolding. One hardcoded target, so the instrumentation path can be proven before
+     * the separate question of what to select is opened. Step 3 replaces both of these with a
+     * configurable package prefix, and this agent stops being useful only against its own tests.
+     */
+    private static final String TARGET_TYPE = "sample.testapp.TestApp";
+    private static final String TARGET_METHOD = "greet";
+
     private Hindsight() {
     }
 
     public static void premain(String agentArgs, Instrumentation instrumentation) {
         try {
+            // Before anything reaches Byte Buddy, including any static initialiser of this class.
+            useSafeByteBuddyMode();
+
             ClassCounter counter = ClassCounter.installOn(instrumentation);
             Runtime.getRuntime().addShutdownHook(new SummaryHook(counter));
+            installTracing(instrumentation);
+
             log("agent loaded - " + version() + " on JVM " + System.getProperty("java.version"));
+            log("tracing " + TARGET_TYPE + "." + TARGET_METHOD);
         } catch (Throwable cause) {
             disable(cause);
+        }
+    }
+
+    private static void useSafeByteBuddyMode() {
+        if (System.getProperty(BYTE_BUDDY_SAFE_MODE) == null) {
+            System.setProperty(BYTE_BUDDY_SAFE_MODE, "true");
+        }
+    }
+
+    private static void installTracing(Instrumentation instrumentation) {
+        new AgentBuilder.Default()
+                // Restricts instrumentation to changes that do not alter the class schema. Advice
+                // is inlined into existing method bodies and adds no members, so this costs
+                // nothing and rules out a whole category of way of breaking a running application.
+                .disableClassFormatChanges()
+                // Instrument on load only. Retransforming what is already loaded is a much larger
+                // promise than step 2 is in a position to keep.
+                .with(AgentBuilder.RedefinitionStrategy.DISABLED)
+                // Silent unless a transformation fails. An agent that quietly instruments nothing
+                // is the single worst failure mode available to it.
+                .with(AgentBuilder.Listener.StreamWriting.toSystemError().withErrorsOnly())
+                .ignore(ElementMatchers.<TypeDescription>isSynthetic().or(new ExcludedTypes()))
+                .type(ElementMatchers.named(TARGET_TYPE))
+                .transform(new TraceTransformer(tracedMethods()))
+                .installOn(instrumentation);
+    }
+
+    /**
+     * Built on demand rather than held in a static field. A static field of a Byte Buddy type would
+     * be initialised during this class's own initialisation -- which happens before {@link #premain}
+     * runs, and therefore before safe mode could be set.
+     *
+     * <p>{@code isMethod} excludes constructors and static initialisers. Enter advice on a
+     * constructor runs before the object is initialised, so it cannot read {@code this}; that needs
+     * separate handling rather than being folded into getting the ordinary case right. Abstract and
+     * native methods have no body to splice into.
+     */
+    private static ElementMatcher.Junction<MethodDescription> tracedMethods() {
+        return ElementMatchers.isMethod()
+                .and(ElementMatchers.named(TARGET_METHOD))
+                .and(ElementMatchers.not(ElementMatchers.isAbstract()))
+                .and(ElementMatchers.not(ElementMatchers.isNative()));
+    }
+
+    /** Bridges the agent's own exclusion list into Byte Buddy's matcher vocabulary. */
+    private static final class ExcludedTypes implements ElementMatcher<TypeDescription> {
+
+        @Override
+        public boolean matches(TypeDescription target) {
+            return target == null || Exclusions.isExcludedType(target.getName());
+        }
+    }
+
+    private static final class TraceTransformer implements AgentBuilder.Transformer {
+
+        private final ElementMatcher.Junction<MethodDescription> methods;
+
+        private TraceTransformer(ElementMatcher.Junction<MethodDescription> methods) {
+            this.methods = methods;
+        }
+
+        @Override
+        public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
+                                                TypeDescription type,
+                                                ClassLoader classLoader,
+                                                JavaModule module,
+                                                ProtectionDomain protectionDomain) {
+            return builder.visit(Advice.to(MethodTraceAdvice.class).on(methods));
         }
     }
 
