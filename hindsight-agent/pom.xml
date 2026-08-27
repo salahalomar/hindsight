@@ -37,6 +37,31 @@
         <artifactId>maven-surefire-plugin</artifactId>
       </plugin>
 
+      <!--
+        Integration tests run after package, against the shaded jar, in a forked JVM. Testing the
+        agent from the surefire classpath would prove only that the classes compile: it would never
+        exercise the manifest, the relocation, or the -javaagent handshake, which is where agents
+        actually break.
+      -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <configuration>
+          <systemPropertyVariables>
+            <hindsight.agent.jar>${project.build.directory}/hindsight-agent.jar</hindsight.agent.jar>
+            <hindsight.testapp.jar>${project.basedir}/../hindsight-testapp/target/hindsight-testapp.jar</hindsight.testapp.jar>
+          </systemPropertyVariables>
+        </configuration>
+        <executions>
+          <execution>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>
