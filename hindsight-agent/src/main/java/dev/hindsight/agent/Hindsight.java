@@ -9,8 +9,11 @@ import net.bytebuddy.matcher.ElementMatcher;
 import net.bytebuddy.matcher.ElementMatchers;
 import net.bytebuddy.utility.JavaModule;
 
+import dev.hindsight.runtime.Recorder;
+
 import java.lang.instrument.Instrumentation;
 import java.security.ProtectionDomain;
+import java.util.function.Consumer;
 
 /**
  * Agent entry point, reached through the {@code Premain-Class} manifest attribute when the JVM is
@@ -45,14 +48,6 @@ public final class Hindsight {
      */
     private static final String BYTE_BUDDY_SAFE_MODE = "net.bytebuddy.safe";
 
-    /*
-     * Step 2 scaffolding. One hardcoded target, so the instrumentation path can be proven before
-     * the separate question of what to select is opened. Step 3 replaces both of these with a
-     * configurable package prefix, and this agent stops being useful only against its own tests.
-     */
-    private static final String TARGET_TYPE = "sample.testapp.TestApp";
-    private static final String TARGET_METHOD = "greet";
-
     private Hindsight() {
     }
 
@@ -63,10 +58,21 @@ public final class Hindsight {
 
             ClassCounter counter = ClassCounter.installOn(instrumentation);
             Runtime.getRuntime().addShutdownHook(new SummaryHook(counter));
-            installTracing(instrumentation);
 
+            AgentConfig config = AgentConfig.fromSystemProperties(new Warning());
             log("agent loaded - " + version() + " on JVM " + System.getProperty("java.version"));
-            log("tracing " + TARGET_TYPE + "." + TARGET_METHOD);
+            log(config.describe());
+
+            if (config.scope().isEmpty()) {
+                // Attaching and instrumenting nothing is a legitimate state, but a silent one is
+                // indistinguishable from a broken agent, so it is said out loud.
+                log("no packages selected, recording nothing."
+                        + " Set -D" + AgentConfig.PACKAGES + "=com.example to record something");
+                return;
+            }
+
+            Recorder.configure(config.bufferEvents(), config.maxDepth(), config.dump());
+            installTracing(instrumentation, config.scope());
         } catch (Throwable cause) {
             disable(cause);
         }
@@ -78,7 +84,7 @@ public final class Hindsight {
         }
     }
 
-    private static void installTracing(Instrumentation instrumentation) {
+    private static void installTracing(Instrumentation instrumentation, PackageScope scope) {
         new AgentBuilder.Default()
                 // Restricts instrumentation to changes that do not alter the class schema. Advice
                 // is inlined into existing method bodies and adds no members, so this costs
@@ -90,8 +96,10 @@ public final class Hindsight {
                 // Silent unless a transformation fails. An agent that quietly instruments nothing
                 // is the single worst failure mode available to it.
                 .with(AgentBuilder.Listener.StreamWriting.toSystemError().withErrorsOnly())
+                // The exclusion list is a floor and is applied first. A scope of "java" does not
+                // buy anyone an instrumented java.lang.String.
                 .ignore(ElementMatchers.<TypeDescription>isSynthetic().or(new ExcludedTypes()))
-                .type(ElementMatchers.named(TARGET_TYPE))
+                .type(new ScopedTypes(scope))
                 .transform(new TraceTransformer(tracedMethods()))
                 .installOn(instrumentation);
     }
@@ -101,16 +109,46 @@ public final class Hindsight {
      * be initialised during this class's own initialisation -- which happens before {@link #premain}
      * runs, and therefore before safe mode could be set.
      *
-     * <p>{@code isMethod} excludes constructors and static initialisers. Enter advice on a
-     * constructor runs before the object is initialised, so it cannot read {@code this}; that needs
-     * separate handling rather than being folded into getting the ordinary case right. Abstract and
-     * native methods have no body to splice into.
+     * <p>{@code isMethod} excludes constructors and static initialisers. Constructor advice is
+     * workable -- we read arguments and never {@code this}, which is the part that is unavailable
+     * before initialisation -- but it doubles the instrumentation surface, and step 3 is about
+     * choosing what to record rather than widening what can be recorded. Abstract and native
+     * methods have no body to splice into, and synthetic ones are compiler bookkeeping that would
+     * show up in a trace as frames nobody wrote.
      */
     private static ElementMatcher.Junction<MethodDescription> tracedMethods() {
         return ElementMatchers.isMethod()
-                .and(ElementMatchers.named(TARGET_METHOD))
                 .and(ElementMatchers.not(ElementMatchers.isAbstract()))
-                .and(ElementMatchers.not(ElementMatchers.isNative()));
+                .and(ElementMatchers.not(ElementMatchers.isNative()))
+                .and(ElementMatchers.not(ElementMatchers.isSynthetic()));
+    }
+
+    /** Restricts instrumentation to the packages the user actually asked for. */
+    private static final class ScopedTypes implements ElementMatcher<TypeDescription> {
+
+        private final PackageScope scope;
+
+        private ScopedTypes(PackageScope scope) {
+            this.scope = scope;
+        }
+
+        @Override
+        public boolean matches(TypeDescription target) {
+            return target != null && scope.includes(target.getName());
+        }
+    }
+
+    /**
+     * A named class rather than a method reference, for the same reason as {@link SummaryHook}:
+     * this runs during agent startup, and an invokedynamic call site bootstrapped there is one more
+     * moving part in the fragile part of the lifecycle.
+     */
+    private static final class Warning implements Consumer<String> {
+
+        @Override
+        public void accept(String message) {
+            log("ignoring " + message);
+        }
     }
 
     /** Bridges the agent's own exclusion list into Byte Buddy's matcher vocabulary. */
