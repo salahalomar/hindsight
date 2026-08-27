@@ -48,6 +48,37 @@ class ExclusionsTest {
         assertTrue(Exclusions.isExcluded(null));
     }
 
+    @DisplayName("the same list applies to binary names, which is what Byte Buddy matches on")
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {
+            "java.lang.String",
+            "jdk.internal.misc.Unsafe",
+            "com.sun.crypto.provider.AESCipher",
+            "dev.hindsight.agent.Hindsight",
+            "dev.hindsight.shaded.bytebuddy.ByteBuddy",
+            "net.bytebuddy.ByteBuddy",
+    })
+    void excludesTheSameClassesByBinaryName(String binaryName) {
+        assertTrue(Exclusions.isExcludedType(binaryName));
+    }
+
+    @DisplayName("application classes are candidates under either spelling")
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {
+            "sample.testapp.TestApp",
+            "com.example.orders.OrderService",
+            "dev.hindsightful.Thing",
+    })
+    void doesNotExcludeApplicationTypes(String binaryName) {
+        assertFalse(Exclusions.isExcludedType(binaryName));
+    }
+
+    @Test
+    @DisplayName("an unnamed type is excluded under either spelling")
+    void excludesNullBinaryNames() {
+        assertTrue(Exclusions.isExcludedType(null));
+    }
+
     @DisplayName("ordinary application classes remain candidates")
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {
