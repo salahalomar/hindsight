@@ -23,17 +23,17 @@ difficulty — is the premise of the project, not a limitation it is embarrassed
 
 ## Status
 
-**Step 3 of 8.** The agent records the call tree of any package you select into a bounded
-per-thread ring buffer, and can print it as an indented tree when the outermost frame returns.
-Values are still reported by type rather than summarised.
+**Step 4 of 8.** The agent records the call tree of any package you select, with arguments, return
+values and thrown exceptions summarised safely, into a bounded per-thread ring buffer. Traces are
+printed on demand; writing them to a file on an escaping exception is step 5.
 
 | Step | | |
 |---|---|---|
 | 1 | Agent skeleton: premain, manifest, class observation | **done** |
 | 2 | Instrument one method via Byte Buddy Advice; reentrancy guard | **done** |
 | 3 | Package-prefix filtering and a bounded per-thread ring buffer | **done** |
-| 4 | Value summarisation, with references never retained | next |
-| 5 | Dump-on-exception and a versioned trace schema | |
+| 4 | Value summarisation, with references never retained | **done** |
+| 5 | Dump-on-exception and a versioned trace schema | next |
 | 6 | HTML viewer: call tree, timeline scrubber, value inspector | |
 | 7 | Overhead benchmark: throughput and p99, agent off vs on | |
 | 8 | Demo: a null born three layers below where it throws | |
@@ -52,22 +52,18 @@ java -Dhindsight.packages=sample.testapp -Dhindsight.dump=true -javaagent:hindsi
 
 ```
 [hindsight] agent loaded - 0.1.0-SNAPSHOT on JVM 25.0.1
-[hindsight] packages=sample.testapp, buffer=1024 events/thread, maxDepth=256, dump=true
+[hindsight] packages=sample.testapp, buffer=1024 events/thread, maxDepth=256, values=summary/64, dump=true
 hello from testapp
 [hindsight] trace for main: 8 events
-[hindsight] +  0.000ms -> sample.testapp.TestApp.main(String[])
-[hindsight] +  0.009ms   -> sample.testapp.TestApp.greet(String)
-[hindsight] +  3.470ms     -> sample.testapp.Greeting.normalise()
-[hindsight] +  3.485ms     <- sample.testapp.Greeting.normalise returned String
-[hindsight] +  3.489ms     -> sample.testapp.Greeting.render(String)
-[hindsight] +  3.619ms     <- sample.testapp.Greeting.render returned String
-[hindsight] +  3.621ms   <- sample.testapp.TestApp.greet returned String
-[hindsight] +  3.684ms <- sample.testapp.TestApp.main returned void
+[hindsight] +  0.000ms -> sample.testapp.TestApp.main(String[0]@26adfd2d)
+[hindsight] +  0.137ms   -> sample.testapp.TestApp.greet(String "testapp")
+[hindsight] +  2.814ms     -> sample.testapp.Greeting.normalise()
+[hindsight] +  2.829ms     <- sample.testapp.Greeting.normalise returned String "testapp"
+[hindsight] +  2.833ms     -> sample.testapp.Greeting.render(String "testapp")
+[hindsight] +  2.883ms     <- sample.testapp.Greeting.render returned String "hello from testapp"
+[hindsight] +  2.886ms   <- sample.testapp.TestApp.greet returned String "hello from testapp"
+[hindsight] +  2.914ms <- sample.testapp.TestApp.main returned void
 ```
-
-Arguments and returns are reported by **type, not value**. Rendering a value means calling
-`toString` on an application object, which can be slow, can throw, and can have side effects; that
-needs the guarded summariser in step 4 rather than an unguarded call on the hot path.
 
 Run it without `-Dhindsight.packages` and the agent attaches, records nothing, and says so. Nothing
 is instrumented by default — an agent that picks something sensible-looking on its own is an agent
@@ -83,6 +79,8 @@ reported and replaced with the default; the agent never refuses to start over on
 | `hindsight.packages` | *(none)* | Comma-separated package prefixes to record. Nothing is recorded until this is set. |
 | `hindsight.buffer.events` | `1024` | Events held per thread, rounded up to a power of two. Roughly 38KB per traced thread at the default. |
 | `hindsight.depth.max` | `256` | Call depth past which frames are counted but not stored. |
+| `hindsight.values` | `summary` | `summary` renders values; `type` reports type names and calls nothing belonging to the application. |
+| `hindsight.value.length` | `64` | Characters kept per rendered value. A value that was cut reports its real length. |
 | `hindsight.dump` | `false` | Print each completed outermost frame as a call tree. |
 
 `hindsight.packages` chooses what the agent *may* record. It never overrides the exclusion list:
@@ -116,6 +114,28 @@ than a list of the agent's own packages: a list has to be maintained, and the co
 entry is a recorder that records itself. The test application therefore lives under `sample.testapp`
 — inside the excluded prefix it would be skipped silently, and the attach test would go on passing
 while proving nothing.
+
+**Values are summarised, and the rules are the interesting part.** Reading a value means calling
+application code, so:
+
+- **Collections, maps and arrays are never rendered through `toString`.** A million-element list
+  builds the entire string before any length cap could apply. They are described structurally
+  instead — `ArrayList[1000000]@3f1a2b` — which is what makes a huge container genuinely safe rather
+  than merely trimmed after the damage. `size()` is application code too, and is guarded.
+- **Boxed primitives are matched by exact class**, not by `instanceof Number`. A user-written
+  `Number` subclass has a user-written `toString`, and the entire point of that list is that its
+  renderings cannot be overridden. Enum constants are read through `name()`, which is final, and
+  through `getDeclaringClass()`, since a constant with a body is an anonymous subclass with no
+  simple name.
+- **Classes that do not override `toString` are never asked.** The inherited implementation only
+  repeats the identity already being printed. The check is cached per class with `ClassValue`.
+- **Anything that does get called is wrapped.** A throwing `toString` is reported as having thrown,
+  which is itself worth knowing; two objects whose `toString` implementations call each other end in
+  a caught `StackOverflowError` rather than a dead thread.
+
+What is deliberately *not* defended against is a `toString` that is merely slow. Bounding that needs
+a watchdog thread and the ability to interrupt application code mid-call, which is more dangerous
+than the problem. `-Dhindsight.values=type` is the answer there, and it calls nothing at all.
 
 **The buffer cannot hold an application object.** Every slot in it is a `String`, `int`, `long` or
 `byte`; values are reduced to text at capture time, by the caller, before they reach it. That turns
@@ -166,6 +186,7 @@ These are known and deliberate, not oversights:
   and belongs with a step that is about widening what gets recorded, not choosing it.
 - **Every method in scope is traced, including trivial accessors.** Skipping getters would be a
   heuristic, and a tool that silently omits frames is worse than a noisy one. Scope is the control.
+- **A slow `toString` is not bounded.** See above; `-Dhindsight.values=type` is the escape hatch.
 - **Argument names depend on the target.** Names are read from the target's bytecode, so an
   application compiled without `-parameters` yields `arg0`, `arg1`. The agent cannot fix that from
   outside a third-party jar.
