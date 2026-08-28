@@ -29,20 +29,31 @@ final class ForkedJvm {
 
     /** The application with the agent attached and whatever configuration the test needs. */
     static Result runWithAgent(String... systemProperties) throws IOException, InterruptedException {
-        List<String> arguments = new ArrayList<>(List.of(systemProperties));
+        return runWithAgent(List.of(systemProperties), List.of());
+    }
+
+    static Result runWithAgent(List<String> systemProperties, List<String> applicationArguments)
+            throws IOException, InterruptedException {
+        List<String> arguments = new ArrayList<>(systemProperties);
         arguments.add("-javaagent:" + PackagedAgent.agentJar());
         arguments.add("-jar");
         arguments.add(PackagedAgent.applicationJar().toString());
+        arguments.addAll(applicationArguments);
         return run(arguments.toArray(new String[0]));
     }
 
     /** The application traced, dumping its call tree when the outermost frame returns. */
     static Result runTraced(String... extraProperties) throws IOException, InterruptedException {
-        List<String> arguments = new ArrayList<>();
-        arguments.add("-Dhindsight.packages=sample.testapp");
-        arguments.add("-Dhindsight.dump=true");
-        arguments.addAll(List.of(extraProperties));
-        return runWithAgent(arguments.toArray(new String[0]));
+        return runTraced(List.of(), extraProperties);
+    }
+
+    static Result runTraced(List<String> applicationArguments, String... extraProperties)
+            throws IOException, InterruptedException {
+        List<String> properties = new ArrayList<>();
+        properties.add("-Dhindsight.packages=sample.testapp");
+        properties.add("-Dhindsight.dump=true");
+        properties.addAll(List.of(extraProperties));
+        return runWithAgent(properties, applicationArguments);
     }
 
     /** The same application with no agent, for comparison. */
@@ -52,11 +63,16 @@ final class ForkedJvm {
 
     record Result(int exitCode, String stdout, String stderr) {
 
-        /** The recorded events only, stripped of the log prefix and the leading timestamp. */
+        /**
+         * The recorded events only, stripped of the log prefix and the leading timestamp, with
+         * identity hashes flattened to {@code @x}. The hashes are the point of being there and are
+         * different on every run, so a test can assert their presence but never their value.
+         */
         List<String> traceLines() {
             return stdout.lines()
                     .filter(line -> line.contains("-> ") || line.contains("<- ") || line.contains("<! "))
                     .map(line -> line.replaceFirst("^\\[hindsight] \\+ *[0-9.]+ms ", ""))
+                    .map(line -> line.replaceAll("@[0-9a-f]+", "@x"))
                     .toList();
         }
 
