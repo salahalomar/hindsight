@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hindsight trace viewer</title>
+<style>
+  :root {
+    --bg: #fbfbfa; --panel: #ffffff; --line: #e3e1dd; --ink: #1c1b19; --muted: #6b6862;
+    --enter: #2f6f4f; --return: #3a5b8c; --throw: #a3372c; --accent: #8a6d2f;
+    --selected: #f0ece2; --warn-bg: #fdf6e3; --warn-line: #d9c98f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16151a; --panel: #1d1c22; --line: #33313a; --ink: #e8e6e3; --muted: #9a968f;
+      --enter: #7fc4a0; --return: #8fb3e0; --throw: #e58b7e; --accent: #d4b46a;
+      --selected: #2a2833; --warn-bg: #2a2416; --warn-line: #6b5a2a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  header { padding: 20px 24px 16px; border-bottom: 1px solid var(--line); }
+  h1 { margin: 0; font-size: 20px; letter-spacing: -0.01em; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  .premise {
+    margin: 8px 0 0; max-width: 70ch; color: var(--muted); font-size: 13px;
+    border-left: 3px solid var(--accent); padding-left: 10px;
+  }
+  .premise b { color: var(--ink); }
+  main { padding: 20px 24px 32px; }
+  .loader {
+    border: 1px dashed var(--line); border-radius: 8px; padding: 20px; background: var(--panel);
+  }
+  .loader.over { border-color: var(--accent); background: var(--selected); }
+  .loader h2 { margin: 0 0 4px; font-size: 14px; }
+  .loader p { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+  textarea {
+    width: 100%; min-height: 84px; margin-top: 10px; padding: 8px; resize: vertical;
+    background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;
+  }
+  button, .filebutton {
+    font: inherit; padding: 6px 12px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  }
+  button:hover:not(:disabled), .filebutton:hover { border-color: var(--accent); }
+  button:disabled { opacity: 0.4; cursor: default; }
+  input[type=file] { display: none; }
+  .notice { padding: 10px 12px; border-radius: 6px; margin-bottom: 14px; font-size: 13px; }
+  .notice.error { background: var(--warn-bg); border: 1px solid var(--throw); color: var(--throw); }
+  .notice.warn { background: var(--warn-bg); border: 1px solid var(--warn-line); }
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 6px 22px; margin-bottom: 14px;
+    padding-bottom: 12px; border-bottom: 1px solid var(--line); font-size: 13px;
+  }
+  .meta div { color: var(--muted); }
+  .meta b { color: var(--ink); font-weight: 600; }
+  .panes { display: grid; grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 860px) { .panes { grid-template-columns: 1fr; } }
+  .pane {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+  }
+  .pane > h2 {
+    margin: 0; padding: 8px 12px; font-size: 12px; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--muted); border-bottom: 1px solid var(--line);
+  }
+  #tree { max-height: 58vh; overflow: auto; }
+  .row {
+    display: flex; gap: 10px; padding: 3px 12px; cursor: pointer; white-space: pre;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px;
+  }
+  .row:hover { background: var(--selected); }
+  .row.selected { background: var(--selected); box-shadow: inset 3px 0 0 var(--accent); }
+  .row .at { color: var(--muted); flex: 0 0 auto; }
+  .row .body { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
+  .row .took { color: var(--muted); flex: 0 0 auto; }
+  .enter .arrow { color: var(--enter); }
+  .return .arrow { color: var(--return); }
+  .throw .arrow, .throw .body { color: var(--throw); }
+  .inspector { padding: 12px; }
+  .inspector dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; }
+  .inspector dt { color: var(--muted); font-size: 12px; }
+  .inspector dd { margin: 0; word-break: break-word; }
+  .inspector h3 {
+    margin: 14px 0 4px; font-size: 12px; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--muted);
+  }
+  .inspector pre {
+    margin: 0; padding: 8px; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 6px; overflow-x: auto; font-size: 12.5px;
+  }
+  .empty { padding: 12px; color: var(--muted); }
+  .scrub { margin-top: 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .scrub input[type=range] { flex: 1 1 240px; accent-color: var(--accent); }
+  .scrub .pos { color: var(--muted); font-size: 13px; min-width: 12ch; }
+  .hint { margin-top: 8px; color: var(--muted); font-size: 12px; }
+  footer { padding: 0 24px 28px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>hindsight <span>trace viewer</span></h1>
+  <p class="premise">
+    <b>A recording, not a replay.</b> Nothing here is re-executed. These are the values that were
+    actually observed as the program ran, and stepping backwards moves through what was recorded
+    &mdash; it does not undo anything or restore any state.
+  </p>
+</header>
+
+<main>
+  <section id="loader" class="loader">
+    <h2>Open a trace</h2>
+    <p>Drop a <code>hindsight-*.json</code> file here, choose one, or paste its contents. Everything
+      happens in this page; nothing is uploaded anywhere.</p>
+    <label class="filebutton">Choose file&hellip;<input id="file" type="file" accept=".json,application/json"></label>
+    <textarea id="paste" placeholder="...or paste the JSON here and press Load"></textarea>
+    <div style="margin-top:8px"><button id="loadPasted" type="button">Load pasted JSON</button></div>
+  </section>
+
+  <section id="problem" hidden></section>
+
+  <section id="trace" hidden>
+    <div id="warnings"></div>
+    <div class="meta" id="meta"></div>
+
+    <div class="panes">
+      <div class="pane">
+        <h2>Call tree</h2>
+        <div id="tree"></div>
+      </div>
+      <div class="pane">
+        <h2>Value inspector</h2>
+        <div class="inspector" id="inspector"></div>
+      </div>
+    </div>
+
+    <div class="scrub">
+      <button id="first" type="button" title="First event (Home)">&#124;&lt;</button>
+      <button id="back" type="button" title="Step backwards (Left arrow)">&lt; Back</button>
+      <button id="forward" type="button" title="Step forwards (Right arrow)">Forward &gt;</button>
+      <button id="last" type="button" title="Last event (End)">&gt;&#124;</button>
+      <input id="range" type="range" min="0" max="0" value="0" aria-label="Position in the recording">
+      <span class="pos mono" id="position"></span>
+    </div>
+    <p class="hint">Arrow keys step through the recording. Home and End jump to either end.
+      <button id="reset" type="button" style="margin-left:8px">Open another trace</button>
+    </p>
+  </section>
+</main>
+
+<footer>hindsight &mdash; a time-travel debugger for the JVM. Reads <code>hindsight.trace/1</code>.</footer>
+
+<script>
+"use strict";
+
+// The one version of the trace format this viewer understands. A reader that guesses at a document
+// it does not recognise produces a confident wrong answer, which is worse than refusing.
+var SCHEMA = "hindsight.trace/1";
+
+var state = { events: [], frames: [], index: 0 };
+
+var el = function (id) { return document.getElementById(id); };
+
+function show(node, visible) { node.hidden = !visible; }
+
+function problem(message) {
+  var box = el("problem");
+  box.innerHTML = "";
+  var notice = document.createElement("div");
+  notice.className = "notice error";
+  notice.textContent = message;
+  box.appendChild(notice);
+  show(box, true);
+  show(el("trace"), false);
+  show(el("loader"), true);
+}
+
+function text(tag, className, content) {
+  var node = document.createElement(tag);
+  if (className) { node.className = className; }
+  if (content !== undefined) { node.textContent = content; }
+  return node;
+}
+
+function millis(nanos) { return (nanos / 1e6).toFixed(3) + "ms"; }
+
+/*
+ * Every kind is matched by name, and an unrecognised one is shown as unrecognised. Treating
+ * "anything that is not an entry or a return" as a thrown exception would quietly mislabel any kind
+ * a later version of the format adds, and mislabelling a throw is the worst mistake this can make.
+ */
+
+function isExit(event) { return event.kind === "return" || event.kind === "throw"; }
+
+/** The payload field is named after the kind, so a reader never has to consult the kind to use it. */
+function payloadOf(event) {
+  if (event.kind === "enter") { return event.arguments; }
+  if (event.kind === "return") { return event.returned; }
+  if (event.kind === "throw") { return event.thrown; }
+  return undefined;
+}
+
+function payloadLabel(event) {
+  if (event.kind === "enter") { return "Arguments"; }
+  if (event.kind === "return") { return "Returned"; }
+  if (event.kind === "throw") { return "Thrown"; }
+  return "Payload";
+}
+
+function signatureOf(event) {
+  var frame = event.type + "." + event.method;
+  if (event.kind === "enter") { return "-> " + frame + "(" + (event.arguments || "") + ")"; }
+  if (event.kind === "return") { return "<- " + frame + " returned " + event.returned; }
+  if (event.kind === "throw") { return "<! " + frame + " threw " + event.thrown; }
+  return "?? " + frame + " (this viewer does not know the kind " + event.kind + ")";
+}
+
+/**
+ * Pairs each exit with the entry it belongs to, by walking the events as a stack. That gives every
+ * frame a duration, and lets the inspector show what a frame was entered with while looking at what
+ * it returned. A trace whose oldest events were dropped can have exits with no matching entry, so
+ * an unmatched exit is left unpaired rather than blamed on whatever happens to be on the stack.
+ */
+function pair(events) {
+  var partner = new Array(events.length).fill(-1);
+  var open = [];
+  for (var i = 0; i < events.length; i++) {
+    var event = events[i];
+    if (event.kind === "enter") {
+      open.push(i);
+    } else if (isExit(event)) {
+      var start = -1;
+      for (var j = open.length - 1; j >= 0; j--) {
+        if (events[open[j]].depth === event.depth) { start = open.splice(j, 1)[0]; break; }
+      }
+      if (start >= 0) { partner[i] = start; partner[start] = i; }
+    }
+  }
+  return partner;
+}
+
+function load(source) {
+  var document_;
+  try {
+    document_ = JSON.parse(source);
+  } catch (badJson) {
+    problem("That does not parse as JSON: " + badJson.message);
+    return;
+  }
+  if (!document_ || document_.schema !== SCHEMA) {
+    problem("This viewer reads " + SCHEMA + ", and that file says " +
+      (document_ && document_.schema ? document_.schema : "nothing at all") +
+      ". Refusing to guess at it.");
+    return;
+  }
+  if (!Array.isArray(document_.events)) {
+    problem("The trace has no events array.");
+    return;
+  }
+
+  state.trace = document_;
+  state.events = document_.events;
+  state.frames = pair(document_.events);
+  state.index = 0;
+
+  show(el("problem"), false);
+  show(el("loader"), false);
+  show(el("trace"), true);
+
+  renderMeta();
+  renderWarnings();
+  renderTree();
+
+  var range = el("range");
+  range.max = String(Math.max(0, state.events.length - 1));
+  select(0);
+}
+
+function renderMeta() {
+  var trace = state.trace;
+  var meta = el("meta");
+  meta.innerHTML = "";
+  var entry = trace.entryPoint || {};
+  var fields = [
+    ["Entry point", (entry.type || "?") + "." + (entry.method || "?")],
+    ["Thread", trace.thread],
+    ["Recorded", trace.recordedAt],
+    ["Events", String(state.events.length)],
+    ["Agent", trace.agent]
+  ];
+  fields.forEach(function (field) {
+    var box = text("div", null, field[0] + " ");
+    box.appendChild(text("b", null, field[1] === undefined ? "?" : field[1]));
+    meta.appendChild(box);
+  });
+}
+
+function renderWarnings() {
+  var box = el("warnings");
+  box.innerHTML = "";
+  var truncation = state.trace.truncation || {};
+  var lost = [];
+  if (truncation.droppedToRing > 0) {
+    lost.push(truncation.droppedToRing + " earlier events were dropped when the ring buffer wrapped");
+  }
+  if (truncation.beyondMaxDepth > 0) {
+    lost.push(truncation.beyondMaxDepth + " events were deeper than the configured depth limit");
+  }
+  if (lost.length) {
+    // A truncated recording that does not say so reads as a complete account of what happened.
+    box.appendChild(text("div", "notice warn",
+      "This recording is incomplete: " + lost.join(", ") + "."));
+  }
+}
+
+function renderTree() {
+  var tree = el("tree");
+  tree.innerHTML = "";
+  if (!state.events.length) {
+    tree.appendChild(text("div", "empty", "This trace contains no events."));
+    return;
+  }
+  state.events.forEach(function (event, index) {
+    var row = text("div", "row " + event.kind);
+    row.dataset.index = String(index);
+    row.appendChild(text("span", "at", millis(event.offsetNanos).padStart(10)));
+
+    var body = text("span", "body");
+    body.appendChild(text("span", "arrow", "  ".repeat(event.depth) + signatureOf(event).slice(0, 2)));
+    body.appendChild(document.createTextNode(signatureOf(event).slice(2)));
+    row.appendChild(body);
+
+    var opened = state.frames[index];
+    if (isExit(event) && opened >= 0) {
+      row.appendChild(text("span", "took",
+        millis(event.offsetNanos - state.events[opened].offsetNanos)));
+    }
+    row.addEventListener("click", function () { select(index); });
+    tree.appendChild(row);
+  });
+}
+
+function renderInspector() {
+  var inspector = el("inspector");
+  inspector.innerHTML = "";
+  var event = state.events[state.index];
+  if (!event) {
+    inspector.appendChild(text("div", "empty", "Nothing selected."));
+    return;
+  }
+
+  var list = document.createElement("dl");
+  var add = function (name, value) {
+    list.appendChild(text("dt", null, name));
+    list.appendChild(text("dd", "mono", value));
+  };
+  add("Event", "seq " + event.seq + " (" + (state.index + 1) + " of " + state.events.length + ")");
+  add("Kind", event.kind);
+  add("Frame", event.type + "." + event.method);
+  add("Depth", String(event.depth));
+  add("At", millis(event.offsetNanos));
+  var partner = state.frames[state.index];
+  if (partner >= 0) {
+    add(event.kind === "enter" ? "Took" : "Took",
+      millis(Math.abs(state.events[partner].offsetNanos - event.offsetNanos)));
+  }
+  inspector.appendChild(list);
+
+  inspector.appendChild(text("h3", null, payloadLabel(event)));
+  inspector.appendChild(text("pre", "mono", payloadOf(event) || "(none)"));
+
+  // Looking at what a frame produced is only half the question. The other half is what it was
+  // given, which is one lookup away and is usually where the answer is.
+  if (isExit(event) && partner >= 0) {
+    inspector.appendChild(text("h3", null, "Entered with"));
+    inspector.appendChild(text("pre", "mono", state.events[partner].arguments || "(none)"));
+  }
+}
+
+function select(index) {
+  if (!state.events.length) { return; }
+  state.index = Math.min(Math.max(index, 0), state.events.length - 1);
+
+  var rows = el("tree").children;
+  for (var i = 0; i < rows.length; i++) {
+    rows[i].classList.toggle("selected", i === state.index);
+  }
+  var selected = rows[state.index];
+  if (selected && selected.scrollIntoView) {
+    selected.scrollIntoView({ block: "nearest" });
+  }
+
+  el("range").value = String(state.index);
+  el("position").textContent = (state.index + 1) + " / " + state.events.length;
+  el("back").disabled = state.index === 0;
+  el("first").disabled = state.index === 0;
+  el("forward").disabled = state.index === state.events.length - 1;
+  el("last").disabled = state.index === state.events.length - 1;
+
+  renderInspector();
+}
+
+function step(by) { select(state.index + by); }
+
+el("file").addEventListener("change", function (change) {
+  var chosen = change.target.files[0];
+  if (!chosen) { return; }
+  var reader = new FileReader();
+  reader.onload = function () { load(String(reader.result)); };
+  reader.onerror = function () { problem("That file could not be read."); };
+  reader.readAsText(chosen);
+});
+
+el("loadPasted").addEventListener("click", function () {
+  var pasted = el("paste").value.trim();
+  if (pasted) { load(pasted); } else { problem("Nothing was pasted."); }
+});
+
+var loader = el("loader");
+["dragenter", "dragover"].forEach(function (name) {
+  loader.addEventListener(name, function (drag) {
+    drag.preventDefault();
+    loader.classList.add("over");
+  });
+});
+["dragleave", "drop"].forEach(function (name) {
+  loader.addEventListener(name, function () { loader.classList.remove("over"); });
+});
+loader.addEventListener("drop", function (drop) {
+  drop.preventDefault();
+  var dropped = drop.dataTransfer.files[0];
+  if (!dropped) { return; }
+  var reader = new FileReader();
+  reader.onload = function () { load(String(reader.result)); };
+  reader.readAsText(dropped);
+});
+
+el("back").addEventListener("click", function () { step(-1); });
+el("forward").addEventListener("click", function () { step(1); });
+el("first").addEventListener("click", function () { select(0); });
+el("last").addEventListener("click", function () { select(state.events.length - 1); });
+el("range").addEventListener("input", function (change) { select(Number(change.target.value)); });
+el("reset").addEventListener("click", function () {
+  show(el("trace"), false);
+  show(el("loader"), true);
+  el("paste").value = "";
+});
+
+document.addEventListener("keydown", function (key) {
+  if (el("trace").hidden || key.target.tagName === "TEXTAREA") { return; }
+  var moves = { ArrowLeft: -1, ArrowRight: 1 };
+  if (key.key in moves) { key.preventDefault(); step(moves[key.key]); }
+  else if (key.key === "Home") { key.preventDefault(); select(0); }
+  else if (key.key === "End") { key.preventDefault(); select(state.events.length - 1); }
+});
+</script>
+</body>
+</html>
