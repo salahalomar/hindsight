@@ -2,6 +2,7 @@ package dev.hindsight.agent;
 
 import dev.hindsight.runtime.ValueDetail;
 
+import java.nio.file.Path;
 import java.util.Properties;
 import java.util.function.Consumer;
 
@@ -17,7 +18,8 @@ import java.util.function.Consumer;
  * a moment ago.
  */
 public record AgentConfig(PackageScope scope, int bufferEvents, int maxDepth, boolean dump,
-                          ValueDetail valueDetail, int valueLength) {
+                          ValueDetail valueDetail, int valueLength,
+                          Path traceDirectory, int traceMax) {
 
     public static final String PACKAGES = "hindsight.packages";
     public static final String BUFFER_EVENTS = "hindsight.buffer.events";
@@ -25,6 +27,8 @@ public record AgentConfig(PackageScope scope, int bufferEvents, int maxDepth, bo
     public static final String DUMP = "hindsight.dump";
     public static final String VALUES = "hindsight.values";
     public static final String VALUE_LENGTH = "hindsight.value.length";
+    public static final String TRACE_DIR = "hindsight.trace.dir";
+    public static final String TRACE_MAX = "hindsight.trace.max";
 
     static final int DEFAULT_BUFFER_EVENTS = 1024;
     static final int DEFAULT_MAX_DEPTH = 256;
@@ -34,6 +38,10 @@ public record AgentConfig(PackageScope scope, int bufferEvents, int maxDepth, bo
     /** Long enough to be worth reading, short enough that one argument cannot dominate a trace. */
     static final int MIN_VALUE_LENGTH = 8;
     static final int MAX_VALUE_LENGTH = 4096;
+    static final String DEFAULT_TRACE_DIR = "hindsight-traces";
+
+    /** Enough to diagnose a failure, few enough that a crash loop cannot fill a disk. Zero is off. */
+    static final int DEFAULT_TRACE_MAX = 50;
 
     /** Below this a buffer cannot hold a useful call tree; above it, one thread can cost megabytes. */
     static final int MIN_BUFFER_EVENTS = 16;
@@ -52,7 +60,22 @@ public record AgentConfig(PackageScope scope, int bufferEvents, int maxDepth, bo
                 Boolean.parseBoolean(properties.getProperty(DUMP)),
                 valueDetail(properties, warnings),
                 bounded(properties, VALUE_LENGTH, DEFAULT_VALUE_LENGTH,
-                        MIN_VALUE_LENGTH, MAX_VALUE_LENGTH, warnings));
+                        MIN_VALUE_LENGTH, MAX_VALUE_LENGTH, warnings),
+                traceDirectory(properties, warnings),
+                bounded(properties, TRACE_MAX, DEFAULT_TRACE_MAX, 0, Integer.MAX_VALUE, warnings));
+    }
+
+    private static Path traceDirectory(Properties properties, Consumer<String> warnings) {
+        String configured = properties.getProperty(TRACE_DIR, DEFAULT_TRACE_DIR);
+        try {
+            return Path.of(configured);
+        } catch (RuntimeException notAPath) {
+            // Path.of rejects names the platform cannot represent. Losing traces is better than
+            // refusing to attach over it.
+            warnings.accept(TRACE_DIR + "=" + configured + " is not a usable path, using "
+                    + DEFAULT_TRACE_DIR);
+            return Path.of(DEFAULT_TRACE_DIR);
+        }
     }
 
     private static ValueDetail valueDetail(Properties properties, Consumer<String> warnings) {
@@ -104,6 +127,7 @@ public record AgentConfig(PackageScope scope, int bufferEvents, int maxDepth, bo
                 + ", maxDepth=" + maxDepth()
                 + ", values=" + valueDetail().name().toLowerCase(java.util.Locale.ROOT)
                 + "/" + valueLength()
-                + ", dump=" + dump();
+                + ", dump=" + dump()
+                + ", traces=" + (traceMax() <= 0 ? "off" : traceDirectory() + " (max " + traceMax() + ")");
     }
 }

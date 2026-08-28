@@ -104,6 +104,20 @@ class AgentConfigTest {
     }
 
     @Test
+    @DisplayName("the trace directory is configurable, and zero files means off")
+    void traceSettings() {
+        assertEquals(java.nio.file.Path.of("hindsight-traces"), configure().traceDirectory());
+        assertEquals(AgentConfig.DEFAULT_TRACE_MAX, configure().traceMax());
+
+        AgentConfig configured = configure(AgentConfig.TRACE_DIR, "/tmp/traces",
+                AgentConfig.TRACE_MAX, "0");
+        assertEquals(java.nio.file.Path.of("/tmp/traces"), configured.traceDirectory());
+        assertEquals(0, configured.traceMax());
+        assertTrue(configured.describe().contains("traces=off"), configured.describe());
+        assertTrue(warnings.isEmpty());
+    }
+
+    @Test
     @DisplayName("what was asked for is read back")
     void readsConfiguredValues() {
         AgentConfig config = configure(
@@ -125,7 +139,7 @@ class AgentConfigTest {
         AgentConfig config = configure(AgentConfig.PACKAGES, "com.example", AgentConfig.DUMP, "true");
 
         assertEquals("packages=com.example, buffer=1024 events/thread, maxDepth=256, "
-                        + "values=summary/64, dump=true",
+                        + "values=summary/64, dump=true, traces=hindsight-traces (max 50)",
                 config.describe());
     }
 }
