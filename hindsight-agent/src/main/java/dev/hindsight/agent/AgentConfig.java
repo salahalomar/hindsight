@@ -1,5 +1,7 @@
 package dev.hindsight.agent;
 
+import dev.hindsight.runtime.ValueDetail;
+
 import java.util.Properties;
 import java.util.function.Consumer;
 
@@ -14,15 +16,24 @@ import java.util.function.Consumer;
  * to start because a buffer size was mistyped would take down an application that was running fine
  * a moment ago.
  */
-public record AgentConfig(PackageScope scope, int bufferEvents, int maxDepth, boolean dump) {
+public record AgentConfig(PackageScope scope, int bufferEvents, int maxDepth, boolean dump,
+                          ValueDetail valueDetail, int valueLength) {
 
     public static final String PACKAGES = "hindsight.packages";
     public static final String BUFFER_EVENTS = "hindsight.buffer.events";
     public static final String MAX_DEPTH = "hindsight.depth.max";
     public static final String DUMP = "hindsight.dump";
+    public static final String VALUES = "hindsight.values";
+    public static final String VALUE_LENGTH = "hindsight.value.length";
 
     static final int DEFAULT_BUFFER_EVENTS = 1024;
     static final int DEFAULT_MAX_DEPTH = 256;
+    static final ValueDetail DEFAULT_VALUE_DETAIL = ValueDetail.SUMMARY;
+    static final int DEFAULT_VALUE_LENGTH = 64;
+
+    /** Long enough to be worth reading, short enough that one argument cannot dominate a trace. */
+    static final int MIN_VALUE_LENGTH = 8;
+    static final int MAX_VALUE_LENGTH = 4096;
 
     /** Below this a buffer cannot hold a useful call tree; above it, one thread can cost megabytes. */
     static final int MIN_BUFFER_EVENTS = 16;
@@ -38,7 +49,21 @@ public record AgentConfig(PackageScope scope, int bufferEvents, int maxDepth, bo
                 toPowerOfTwo(bounded(properties, BUFFER_EVENTS, DEFAULT_BUFFER_EVENTS,
                         MIN_BUFFER_EVENTS, MAX_BUFFER_EVENTS, warnings)),
                 bounded(properties, MAX_DEPTH, DEFAULT_MAX_DEPTH, 1, Integer.MAX_VALUE, warnings),
-                Boolean.parseBoolean(properties.getProperty(DUMP)));
+                Boolean.parseBoolean(properties.getProperty(DUMP)),
+                valueDetail(properties, warnings),
+                bounded(properties, VALUE_LENGTH, DEFAULT_VALUE_LENGTH,
+                        MIN_VALUE_LENGTH, MAX_VALUE_LENGTH, warnings));
+    }
+
+    private static ValueDetail valueDetail(Properties properties, Consumer<String> warnings) {
+        String configured = properties.getProperty(VALUES);
+        ValueDetail parsed = ValueDetail.parse(configured, DEFAULT_VALUE_DETAIL);
+        if (parsed == null) {
+            warnings.accept(VALUES + "=" + configured + " is not one of summary or type, using "
+                    + DEFAULT_VALUE_DETAIL.name().toLowerCase(java.util.Locale.ROOT));
+            return DEFAULT_VALUE_DETAIL;
+        }
+        return parsed;
     }
 
     private static int bounded(Properties properties, String key, int fallback,
@@ -77,6 +102,8 @@ public record AgentConfig(PackageScope scope, int bufferEvents, int maxDepth, bo
         return "packages=" + scope().describe()
                 + ", buffer=" + bufferEvents() + " events/thread"
                 + ", maxDepth=" + maxDepth()
+                + ", values=" + valueDetail().name().toLowerCase(java.util.Locale.ROOT)
+                + "/" + valueLength()
                 + ", dump=" + dump();
     }
 }

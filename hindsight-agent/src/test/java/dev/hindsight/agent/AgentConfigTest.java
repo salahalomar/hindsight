@@ -1,6 +1,7 @@
 package dev.hindsight.agent;
 
 import org.junit.jupiter.api.DisplayName;
+import dev.hindsight.runtime.ValueDetail;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -80,6 +81,29 @@ class AgentConfigTest {
     }
 
     @Test
+    @DisplayName("value rendering can be turned down, and an unknown mode is reported")
+    void valueDetail() {
+        assertEquals(ValueDetail.SUMMARY, configure().valueDetail());
+        assertEquals(ValueDetail.TYPE, configure(AgentConfig.VALUES, "type").valueDetail());
+        assertEquals(ValueDetail.TYPE, configure(AgentConfig.VALUES, "  TYPE ").valueDetail());
+        assertTrue(warnings.isEmpty());
+
+        assertEquals(ValueDetail.SUMMARY, configure(AgentConfig.VALUES, "verbose").valueDetail());
+        assertEquals(1, warnings.size(), warnings.toString());
+        assertTrue(warnings.getFirst().contains("not one of summary or type"), warnings.toString());
+    }
+
+    @Test
+    @DisplayName("the value length cap is clamped rather than trusted")
+    void valueLength() {
+        assertEquals(AgentConfig.DEFAULT_VALUE_LENGTH, configure().valueLength());
+        assertEquals(200, configure(AgentConfig.VALUE_LENGTH, "200").valueLength());
+        assertEquals(AgentConfig.MIN_VALUE_LENGTH, configure(AgentConfig.VALUE_LENGTH, "0").valueLength());
+        assertEquals(AgentConfig.MAX_VALUE_LENGTH,
+                configure(AgentConfig.VALUE_LENGTH, "999999").valueLength());
+    }
+
+    @Test
     @DisplayName("what was asked for is read back")
     void readsConfiguredValues() {
         AgentConfig config = configure(
@@ -100,7 +124,8 @@ class AgentConfigTest {
     void describesItself() {
         AgentConfig config = configure(AgentConfig.PACKAGES, "com.example", AgentConfig.DUMP, "true");
 
-        assertEquals("packages=com.example, buffer=1024 events/thread, maxDepth=256, dump=true",
+        assertEquals("packages=com.example, buffer=1024 events/thread, maxDepth=256, "
+                        + "values=summary/64, dump=true",
                 config.describe());
     }
 }
