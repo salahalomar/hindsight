@@ -20,9 +20,20 @@ public final class TestApp {
     private TestApp() {
     }
 
+    /** Passed as the first argument to run the branch that hands the agent a hostile object. */
+    private static final String HOSTILE = "hostile";
+
     public static void main(String[] args) {
         String name = args.length > 0 ? args[0] : "testapp";
         System.out.println(greet(name));
+        if (HOSTILE.equals(name)) {
+            System.out.println(describe(new Unprintable()));
+        }
+    }
+
+    static String describe(Object subject) {
+        // Deliberately does not touch the argument. The agent will, and that is the point.
+        return "described one object";
     }
 
     static String greet(String name) {
