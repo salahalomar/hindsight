@@ -23,8 +23,17 @@ public final class TestApp {
     /** Passed as the first argument to run the branch that hands the agent a hostile object. */
     private static final String HOSTILE = "hostile";
 
+    /** Passed as the first argument to run the branch that fails. */
+    private static final String FAIL = "fail";
+
     public static void main(String[] args) {
         String name = args.length > 0 ? args[0] : "testapp";
+        if (FAIL.equals(name)) {
+            // The null is introduced here and does not explode until two frames below, which is
+            // the shape of the bug this whole project exists to make visible.
+            System.out.println(greet(null));
+            return;
+        }
         System.out.println(greet(name));
         if (HOSTILE.equals(name)) {
             System.out.println(describe(new Unprintable()));
