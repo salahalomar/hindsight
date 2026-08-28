@@ -1,6 +1,7 @@
 package dev.hindsight.runtime;
 
 import dev.hindsight.trace.TraceFormatter;
+import dev.hindsight.trace.TraceWriter;
 
 /**
  * The sink that instrumented methods call into.
@@ -39,6 +40,7 @@ public final class Recorder {
     private static volatile boolean dump;
     private static volatile ValueSummariser summariser =
             new ValueSummariser(ValueDetail.SUMMARY, 64);
+    private static volatile TraceWriter traceWriter;
 
     private static final ThreadLocal<RingBuffer> BUFFERS = new ThreadLocal<>() {
         @Override
@@ -51,11 +53,13 @@ public final class Recorder {
     }
 
     /** Called once from {@code premain}, before any application class has been instrumented. */
-    public static void configure(int bufferEvents, int maxDepth, boolean dump, ValueSummariser summariser) {
+    public static void configure(int bufferEvents, int maxDepth, boolean dump,
+                                 ValueSummariser summariser, TraceWriter traceWriter) {
         Recorder.bufferEvents = bufferEvents;
         Recorder.maxDepth = maxDepth;
         Recorder.dump = dump;
         Recorder.summariser = summariser;
+        Recorder.traceWriter = traceWriter;
     }
 
     public static void onEnter(String type, String method, Object[] arguments) {
@@ -86,7 +90,7 @@ public final class Recorder {
                         VOID.equals(returnType) ? VOID : values.summarise(returned));
             }
             if (buffer.depth() == 0) {
-                completeOutermostFrame(buffer);
+                completeOutermostFrame(buffer, type, method, thrown != null);
             }
         } catch (Throwable ignored) {
             // As above.
@@ -101,9 +105,16 @@ public final class Recorder {
      * rolling mixture of unrelated ones, which is the property step 5 needs in order to dump
      * something coherent when an exception escapes.
      */
-    private static void completeOutermostFrame(RingBuffer buffer) {
+    private static void completeOutermostFrame(RingBuffer buffer, String type, String method, boolean failed) {
+        String thread = Thread.currentThread().getName();
+        // The file first. It is the artefact somebody will still have at 3am; the console tree is a
+        // convenience for whoever is watching right now.
+        TraceWriter writer = traceWriter;
+        if (failed && writer != null) {
+            writer.write(thread, type, method, buffer);
+        }
         if (dump) {
-            System.out.println(TraceFormatter.render(Thread.currentThread().getName(), buffer));
+            System.out.println(TraceFormatter.render(thread, buffer));
         }
         buffer.reset();
     }

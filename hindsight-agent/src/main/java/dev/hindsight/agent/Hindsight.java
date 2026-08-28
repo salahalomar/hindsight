@@ -11,6 +11,7 @@ import net.bytebuddy.utility.JavaModule;
 
 import dev.hindsight.runtime.Recorder;
 import dev.hindsight.runtime.ValueSummariser;
+import dev.hindsight.trace.TraceWriter;
 
 import java.lang.instrument.Instrumentation;
 import java.security.ProtectionDomain;
@@ -73,7 +74,8 @@ public final class Hindsight {
             }
 
             Recorder.configure(config.bufferEvents(), config.maxDepth(), config.dump(),
-                    new ValueSummariser(config.valueDetail(), config.valueLength()));
+                    new ValueSummariser(config.valueDetail(), config.valueLength()),
+                    new TraceWriter(config.traceDirectory(), config.traceMax(), version(), new Log()));
             installTracing(instrumentation, config.scope());
         } catch (Throwable cause) {
             disable(cause);
@@ -137,6 +139,15 @@ public final class Hindsight {
         @Override
         public boolean matches(TypeDescription target) {
             return target != null && scope.includes(target.getName());
+        }
+    }
+
+    /** Lets the trace writer report through the agent's own prefix without depending on it. */
+    private static final class Log implements Consumer<String> {
+
+        @Override
+        public void accept(String message) {
+            log(message);
         }
     }
 
