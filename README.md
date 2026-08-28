@@ -23,9 +23,8 @@ difficulty — is the premise of the project, not a limitation it is embarrassed
 
 ## Status
 
-**Step 4 of 8.** The agent records the call tree of any package you select, with arguments, return
-values and thrown exceptions summarised safely, into a bounded per-thread ring buffer. Traces are
-printed on demand; writing them to a file on an escaping exception is step 5.
+**Step 5 of 8.** When an exception escapes an instrumented entry point, the agent writes that
+thread's recorded history to a versioned JSON trace file. The viewer that reads it is step 6.
 
 | Step | | |
 |---|---|---|
@@ -33,8 +32,8 @@ printed on demand; writing them to a file on an escaping exception is step 5.
 | 2 | Instrument one method via Byte Buddy Advice; reentrancy guard | **done** |
 | 3 | Package-prefix filtering and a bounded per-thread ring buffer | **done** |
 | 4 | Value summarisation, with references never retained | **done** |
-| 5 | Dump-on-exception and a versioned trace schema | next |
-| 6 | HTML viewer: call tree, timeline scrubber, value inspector | |
+| 5 | Dump-on-exception and a versioned trace schema | **done** |
+| 6 | HTML viewer: call tree, timeline scrubber, value inspector | next |
 | 7 | Overhead benchmark: throughput and p99, agent off vs on | |
 | 8 | Demo: a null born three layers below where it throws | |
 
@@ -69,6 +68,58 @@ Run it without `-Dhindsight.packages` and the agent attaches, records nothing, a
 is instrumented by default — an agent that picks something sensible-looking on its own is an agent
 that surprises people in production.
 
+## What a trace is for
+
+Run the test application's failing path and the JVM tells you this:
+
+```
+Exception in thread "main" java.lang.NullPointerException: Cannot invoke "String.strip()" ...
+	at sample.testapp.Greeting.normalise(Greeting.java:15)
+	at sample.testapp.TestApp.greet(TestApp.java:50)
+	at sample.testapp.TestApp.main(TestApp.java:34)
+```
+
+Three frames, and every one of them is where the null *arrived*. The trace written alongside it
+says where it came from:
+
+```json
+{"seq":1,"kind":"enter","depth":1,"type":"sample.testapp.TestApp","method":"greet","arguments":"null"},
+{"seq":2,"kind":"enter","depth":2,"type":"sample.testapp.Greeting","method":"normalise","arguments":""},
+{"seq":3,"kind":"throw","depth":2,"type":"sample.testapp.Greeting","method":"normalise","thrown":"NullPointerException: ..."}
+```
+
+`greet` was *entered* with a null. That is one frame above where the exception was thrown and it is
+the frame a stack trace cannot tell you about, because by then the argument is gone.
+
+## Trace format
+
+Traces are written to `hindsight-traces/` when an exception escapes the outermost instrumented
+frame. The document names its own schema on the first line:
+
+```json
+{
+  "schema": "hindsight.trace/1",
+  "agent": "0.1.0-SNAPSHOT",
+  "recordedAt": "2026-08-28T12:05:04.232049Z",
+  "thread": "main",
+  "entryPoint": {"type": "sample.testapp.TestApp", "method": "main"},
+  "truncation": {"droppedToRing": 0, "beyondMaxDepth": 0},
+  "events": [ ... ]
+}
+```
+
+A reader that does not recognise the version is expected to refuse rather than guess. The number
+gets bumped for anything a reader could misinterpret — a renamed field, a removed one, a changed
+meaning; adding an optional field that older readers can ignore does not need it.
+
+Each event carries `seq`, `kind` (`enter`, `return`, `throw`), `depth`, `offsetNanos`, `type` and
+`method`, plus exactly one of `arguments`, `returned` or `thrown`. Naming the payload rather than
+using one generic `detail` field means a reader never has to consult the kind to know what it is
+looking at. Times are offsets from the first event in nanoseconds; `recordedAt` is the only
+absolute clock in the document, because a `nanoTime` reading means nothing outside the process that
+took it. `entryPoint` is recorded rather than derived from event zero, which stops being the entry
+point as soon as the ring has dropped anything.
+
 ## Configuration
 
 All settings are `-Dhindsight.*` system properties, read once at startup. A mistyped value is
@@ -82,6 +133,8 @@ reported and replaced with the default; the agent never refuses to start over on
 | `hindsight.values` | `summary` | `summary` renders values; `type` reports type names and calls nothing belonging to the application. |
 | `hindsight.value.length` | `64` | Characters kept per rendered value. A value that was cut reports its real length. |
 | `hindsight.dump` | `false` | Print each completed outermost frame as a call tree. |
+| `hindsight.trace.dir` | `hindsight-traces` | Where trace files are written. |
+| `hindsight.trace.max` | `50` | Trace files per JVM run. `0` switches tracing off. |
 
 `hindsight.packages` chooses what the agent *may* record. It never overrides the exclusion list:
 asking for `java` does not get you an instrumented `java.lang.String`.
@@ -137,6 +190,13 @@ What is deliberately *not* defended against is a `toString` that is merely slow.
 a watchdog thread and the ability to interrupt application code mid-call, which is more dangerous
 than the problem. `-Dhindsight.values=type` is the answer there, and it calls nothing at all.
 
+**The trace is written synchronously, on the failing thread.** That cost is deliberate. It happens
+only on a request that has already failed, and a queue with a writer thread would trade the latency
+for the chance of losing the trace at shutdown — which is exactly when a failing process is most
+likely to be going away. The file count is capped for the same reason in reverse: an application
+failing in a loop must not be able to fill a disk, because an agent that turns a bug into an outage
+has made things worse than it found them.
+
 **The buffer cannot hold an application object.** Every slot in it is a `String`, `int`, `long` or
 `byte`; values are reduced to text at capture time, by the caller, before they reach it. That turns
 "never retain a captured object" from a rule someone has to remember into a property of the type.
@@ -186,6 +246,9 @@ These are known and deliberate, not oversights:
   and belongs with a step that is about widening what gets recorded, not choosing it.
 - **Every method in scope is traced, including trivial accessors.** Skipping getters would be a
   heuristic, and a tool that silently omits frames is worse than a noisy one. Scope is the control.
+- **A trace covers one thread.** Buffers are `ThreadLocal`, so a dump is the failing thread's own
+  history and nothing else. For request-scoped work that is the whole story; for work that hops
+  threads it is not, and saying so is better than implying otherwise.
 - **A slow `toString` is not bounded.** See above; `-Dhindsight.values=type` is the escape hatch.
 - **Argument names depend on the target.** Names are read from the target's bytecode, so an
   application compiled without `-parameters` yields `arg0`, `arg1`. The agent cannot fix that from
