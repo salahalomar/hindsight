@@ -11,8 +11,8 @@ import dev.hindsight.trace.TraceFormatter;
  * class surfaces inside a method that has no idea it was instrumented. And nothing may be slow:
  * this runs twice per invocation of every traced method.
  *
- * <p>Values are reduced to their type name and the reference is dropped before returning. Nothing
- * belonging to the application outlives the call that reported it.
+ * <p>Values are reduced to text by {@link ValueSummariser} and the reference is dropped before
+ * returning. Nothing belonging to the application outlives the call that reported it.
  *
  * <p>Buffers are held in a {@link ThreadLocal} and allocated on a thread's first event. That makes
  * them collectable when the thread dies, which matters a great deal when the threads are virtual
@@ -20,15 +20,14 @@ import dev.hindsight.trace.TraceFormatter;
  * own history. For request-scoped tracing that is the right shape; recording across threads is a
  * different problem and would need a different design rather than a wider data structure.
  *
- * <p>Types are still reported in place of values. Rendering a value means calling {@code toString}
- * on an application object, which can be slow, can throw, and can have side effects; that needs the
- * guarded summariser in step 4 rather than an unguarded call here.
+ * <p>Summarising happens inside the reentrancy guard. That matters more than it looks: rendering a
+ * value calls application code, and if that code reaches an instrumented method the guard is what
+ * stops the recorder being re-entered halfway through recording.
  */
 public final class Recorder {
 
     private static final String VOID = "void";
     private static final String NO_ARGUMENTS = "";
-    private static final String NULL = "null";
 
     /*
      * Read when a thread allocates its buffer, and once per completed outermost frame. Deliberately
@@ -38,6 +37,8 @@ public final class Recorder {
     private static volatile int bufferEvents = 1024;
     private static volatile int maxDepth = 256;
     private static volatile boolean dump;
+    private static volatile ValueSummariser summariser =
+            new ValueSummariser(ValueDetail.SUMMARY, 64);
 
     private static final ThreadLocal<RingBuffer> BUFFERS = new ThreadLocal<>() {
         @Override
@@ -50,10 +51,11 @@ public final class Recorder {
     }
 
     /** Called once from {@code premain}, before any application class has been instrumented. */
-    public static void configure(int bufferEvents, int maxDepth, boolean dump) {
+    public static void configure(int bufferEvents, int maxDepth, boolean dump, ValueSummariser summariser) {
         Recorder.bufferEvents = bufferEvents;
         Recorder.maxDepth = maxDepth;
         Recorder.dump = dump;
+        Recorder.summariser = summariser;
     }
 
     public static void onEnter(String type, String method, Object[] arguments) {
@@ -61,7 +63,7 @@ public final class Recorder {
             return;
         }
         try {
-            BUFFERS.get().recordEnter(type, method, argumentTypes(arguments));
+            BUFFERS.get().recordEnter(type, method, argumentSummaries(summariser, arguments));
         } catch (Throwable ignored) {
             // The advice suppresses throwables too. This is the inner of the two nets, and it is
             // here because a recorder that can break its host is not worth attaching.
@@ -76,10 +78,12 @@ public final class Recorder {
         }
         try {
             RingBuffer buffer = BUFFERS.get();
+            ValueSummariser values = summariser;
             if (thrown != null) {
-                buffer.recordThrow(type, method, typeOf(thrown));
+                buffer.recordThrow(type, method, values.describe(thrown));
             } else {
-                buffer.recordReturn(type, method, VOID.equals(returnType) ? VOID : typeOf(returned));
+                buffer.recordReturn(type, method,
+                        VOID.equals(returnType) ? VOID : values.summarise(returned));
             }
             if (buffer.depth() == 0) {
                 completeOutermostFrame(buffer);
@@ -104,28 +108,15 @@ public final class Recorder {
         buffer.reset();
     }
 
-    static String argumentTypes(Object[] arguments) {
+    /** Takes the summariser as an argument so the joining logic can be tested without global state. */
+    static String argumentSummaries(ValueSummariser values, Object[] arguments) {
         if (arguments == null || arguments.length == 0) {
             return NO_ARGUMENTS;
         }
-        StringBuilder types = new StringBuilder(typeOf(arguments[0]));
+        StringBuilder summaries = new StringBuilder(values.summarise(arguments[0]));
         for (int i = 1; i < arguments.length; i++) {
-            types.append(", ").append(typeOf(arguments[i]));
+            summaries.append(", ").append(values.summarise(arguments[i]));
         }
-        return types.toString();
-    }
-
-    /**
-     * The type of a value, never the value. {@code getClass} is safe to call on anything; it runs
-     * no application code and cannot be overridden.
-     */
-    static String typeOf(Object value) {
-        if (value == null) {
-            return NULL;
-        }
-        Class<?> actual = value.getClass();
-        String simple = actual.getSimpleName();
-        // Anonymous classes have no simple name. Reporting an empty string as a type helps nobody.
-        return simple.isEmpty() ? actual.getName() : simple;
+        return summaries.toString();
     }
 }

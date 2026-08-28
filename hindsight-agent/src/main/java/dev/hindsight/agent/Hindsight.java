@@ -10,6 +10,7 @@ import net.bytebuddy.matcher.ElementMatchers;
 import net.bytebuddy.utility.JavaModule;
 
 import dev.hindsight.runtime.Recorder;
+import dev.hindsight.runtime.ValueSummariser;
 
 import java.lang.instrument.Instrumentation;
 import java.security.ProtectionDomain;
@@ -71,7 +72,8 @@ public final class Hindsight {
                 return;
             }
 
-            Recorder.configure(config.bufferEvents(), config.maxDepth(), config.dump());
+            Recorder.configure(config.bufferEvents(), config.maxDepth(), config.dump(),
+                    new ValueSummariser(config.valueDetail(), config.valueLength()));
             installTracing(instrumentation, config.scope());
         } catch (Throwable cause) {
             disable(cause);

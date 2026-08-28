@@ -21,13 +21,13 @@ class MethodTracingIT {
 
         assertEquals(0, result.exitCode(), result.toString());
         assertEquals(List.of(
-                        "-> sample.testapp.TestApp.main(String[])",
-                        "  -> sample.testapp.TestApp.greet(String)",
+                        "-> sample.testapp.TestApp.main(String[0]@x)",
+                        "  -> sample.testapp.TestApp.greet(String \"testapp\")",
                         "    -> sample.testapp.Greeting.normalise()",
-                        "    <- sample.testapp.Greeting.normalise returned String",
-                        "    -> sample.testapp.Greeting.render(String)",
-                        "    <- sample.testapp.Greeting.render returned String",
-                        "  <- sample.testapp.TestApp.greet returned String",
+                        "    <- sample.testapp.Greeting.normalise returned String \"testapp\"",
+                        "    -> sample.testapp.Greeting.render(String \"testapp\")",
+                        "    <- sample.testapp.Greeting.render returned String \"hello from testapp\"",
+                        "  <- sample.testapp.TestApp.greet returned String \"hello from testapp\"",
                         "<- sample.testapp.TestApp.main returned void"),
                 result.traceLines(),
                 "the recorded tree does not match the call the application actually made:\n" + result);
@@ -88,9 +88,9 @@ class MethodTracingIT {
         ForkedJvm.Result result = ForkedJvm.runTraced("-Dhindsight.depth.max=2");
 
         assertEquals(List.of(
-                        "-> sample.testapp.TestApp.main(String[])",
-                        "  -> sample.testapp.TestApp.greet(String)",
-                        "  <- sample.testapp.TestApp.greet returned String",
+                        "-> sample.testapp.TestApp.main(String[0]@x)",
+                        "  -> sample.testapp.TestApp.greet(String \"testapp\")",
+                        "  <- sample.testapp.TestApp.greet returned String \"hello from testapp\"",
                         "<- sample.testapp.TestApp.main returned void"),
                 result.traceLines(),
                 "the depth limit should remove whole frames, not half of them:\n" + result);
