@@ -23,8 +23,9 @@ difficulty — is the premise of the project, not a limitation it is embarrassed
 
 ## Status
 
-**Step 5 of 8.** When an exception escapes an instrumented entry point, the agent writes that
-thread's recorded history to a versioned JSON trace file. The viewer that reads it is step 6.
+**Step 6 of 8.** When an exception escapes an instrumented entry point, the agent writes that
+thread's recorded history to a versioned JSON trace file, and the viewer opens it as a call tree you
+can step backwards through. What remains is measuring the overhead honestly, and a demo.
 
 | Step | | |
 |---|---|---|
@@ -33,8 +34,8 @@ thread's recorded history to a versioned JSON trace file. The viewer that reads 
 | 3 | Package-prefix filtering and a bounded per-thread ring buffer | **done** |
 | 4 | Value summarisation, with references never retained | **done** |
 | 5 | Dump-on-exception and a versioned trace schema | **done** |
-| 6 | HTML viewer: call tree, timeline scrubber, value inspector | next |
-| 7 | Overhead benchmark: throughput and p99, agent off vs on | |
+| 6 | HTML viewer: call tree, timeline scrubber, value inspector | **done** |
+| 7 | Overhead benchmark: throughput and p99, agent off vs on | next |
 | 8 | Demo: a null born three layers below where it throws | |
 
 ## Try it
@@ -91,6 +92,35 @@ says where it came from:
 `greet` was *entered* with a null. That is one frame above where the exception was thrown and it is
 the frame a stack trace cannot tell you about, because by then the argument is gone.
 
+## The viewer
+
+Open `hindsight-viewer/hindsight-viewer.html` in a browser and give it a trace — drop the file on
+it, pick it, or paste the JSON. There is no server, no build step and no network access; it is one
+file you can attach to a ticket.
+
+```
+CALL TREE                                                    VALUE INSPECTOR
+ 0.000ms -> TestApp.main(String[1]@6ea2bc93)                  Kind    throw
+ 0.007ms   -> TestApp.greet(null)                             Frame   TestApp.greet
+ 2.212ms     -> Greeting.normalise()                          Depth   1
+ 2.379ms     <! Greeting.normalise threw NPE        0.167ms   Took    2.384ms
+ 2.390ms   <! TestApp.greet threw NPE               2.384ms
+ 2.397ms <! TestApp.main threw NPE                  2.397ms   THROWN
+                                                              NullPointerException: ...
+                                                              ENTERED WITH
+                                                              null
+```
+
+Arrow keys step through the recording and the scrubber jumps anywhere in it. Selecting an exit shows
+what its frame was **entered with** — which is the question a stack trace cannot answer, and is
+usually where the answer is.
+
+The viewer refuses a schema version it does not recognise rather than guessing, says so when a
+recording is incomplete, and labels an event kind it does not know as unknown rather than assuming
+it was a throw. A Java test reads the field names back off a document the serialiser actually
+produced and fails if the viewer does not know one of them, so the two halves of the format cannot
+drift apart unnoticed.
+
 ## Trace format
 
 Traces are written to `hindsight-traces/` when an exception escapes the outermost instrumented
@@ -145,6 +175,7 @@ asking for `java` does not get you an instrumented `java.lang.String`.
 |---|---|
 | `hindsight-agent` | The agent. Shaded, with Byte Buddy relocated. |
 | `hindsight-testapp` | A tiny application used as an instrumentation target by the tests. |
+| `hindsight-viewer` | One HTML file. Not a Maven module; there is nothing to build. |
 
 Inside the agent, `dev.hindsight.agent` decides what to instrument and runs once at startup;
 `dev.hindsight.runtime` is what application threads call into, twice per traced invocation;
@@ -189,6 +220,11 @@ application code, so:
 What is deliberately *not* defended against is a `toString` that is merely slow. Bounding that needs
 a watchdog thread and the ability to interrupt application code mid-call, which is more dangerous
 than the problem. `-Dhindsight.values=type` is the answer there, and it calls nothing at all.
+
+**The viewer is one file with no build step and no dependencies.** It has to open from a `file://`
+URL on a laptop with no network, because that is the situation somebody reading a trace is usually
+in. A test asserts the file contains no `://` anywhere at all — one stray stylesheet reference and
+it silently renders as unstyled text at exactly the wrong moment.
 
 **The trace is written synchronously, on the failing thread.** That cost is deliberate. It happens
 only on a request that has already failed, and a queue with a writer thread would trade the latency
