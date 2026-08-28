@@ -43,6 +43,7 @@
 
     <byte-buddy.version>1.18.12</byte-buddy.version>
     <junit.version>5.14.4</junit.version>
+    <jackson.version>2.22.2</jackson.version>
 
     <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
     <maven-surefire-plugin.version>3.5.6</maven-surefire-plugin.version>
@@ -57,6 +58,16 @@
         <groupId>net.bytebuddy</groupId>
         <artifactId>byte-buddy</artifactId>
         <version>${byte-buddy.version}</version>
+      </dependency>
+      <!--
+        Test scope only, and asserted to be absent from the shaded jar. Parsing the trace back is
+        what proves the writer emits valid JSON; string comparison would only prove it emits the
+        string somebody expected.
+      -->
+      <dependency>
+        <groupId>com.fasterxml.jackson.core</groupId>
+        <artifactId>jackson-databind</artifactId>
+        <version>${jackson.version}</version>
       </dependency>
       <dependency>
         <groupId>org.junit</groupId>

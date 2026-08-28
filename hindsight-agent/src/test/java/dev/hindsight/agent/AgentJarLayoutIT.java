@@ -84,6 +84,21 @@ class AgentJarLayoutIT {
     }
 
     @Test
+    @DisplayName("test-only dependencies stay out of the shipped agent")
+    void testDependenciesAreNotShaded() throws Exception {
+        try (JarFile jar = new JarFile(PackagedAgent.agentJar().toFile())) {
+            List<String> leaked = jar.stream()
+                    .map(java.util.jar.JarEntry::getName)
+                    .filter(name -> name.startsWith("com/fasterxml/"))
+                    .collect(Collectors.toList());
+
+            // The trace schema tests parse JSON with Jackson. Shipping a second copy of it inside
+            // an agent that attaches to arbitrary applications would be a poor way to repay them.
+            assertTrue(leaked.isEmpty(), "a test dependency reached the agent jar: " + leaked);
+        }
+    }
+
+    @Test
     @DisplayName("no module descriptor confuses the class-path launch")
     void noModuleInfoSurvives() throws Exception {
         try (JarFile jar = new JarFile(PackagedAgent.agentJar().toFile())) {
