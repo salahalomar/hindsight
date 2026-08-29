@@ -59,6 +59,20 @@ public final class ValueSummariser {
         }
     };
 
+    /**
+     * A class's display name never changes, and {@code getSimpleName} reaches through the class's
+     * reflection data to work it out. This is called for every argument of every traced invocation,
+     * so the answer is worked out once per class and then read from a {@link ClassValue}.
+     */
+    private static final ClassValue<String> SIMPLE_NAMES = new ClassValue<>() {
+        @Override
+        protected String computeValue(Class<?> type) {
+            String simple = type.getSimpleName();
+            // Anonymous classes have no simple name. An empty string as a type helps nobody.
+            return simple.isEmpty() ? type.getName() : simple;
+        }
+    };
+
     private final ValueDetail detail;
     private final int maxLength;
 
@@ -198,9 +212,7 @@ public final class ValueSummariser {
     }
 
     private static String simpleNameOf(Class<?> type) {
-        String simple = type.getSimpleName();
-        // Anonymous classes have no simple name. Reporting an empty string as a type helps nobody.
-        return simple.isEmpty() ? type.getName() : simple;
+        return SIMPLE_NAMES.get(type);
     }
 
     private String quote(String text) {
