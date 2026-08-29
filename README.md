@@ -23,9 +23,8 @@ difficulty — is the premise of the project, not a limitation it is embarrassed
 
 ## Status
 
-**Step 6 of 8.** When an exception escapes an instrumented entry point, the agent writes that
-thread's recorded history to a versioned JSON trace file, and the viewer opens it as a call tree you
-can step backwards through. What remains is measuring the overhead honestly, and a demo.
+**Step 7 of 8.** The agent records, writes a trace when a request fails, and the viewer opens it.
+The overhead is measured rather than asserted. What remains is the demo.
 
 | Step | | |
 |---|---|---|
@@ -35,8 +34,8 @@ can step backwards through. What remains is measuring the overhead honestly, and
 | 4 | Value summarisation, with references never retained | **done** |
 | 5 | Dump-on-exception and a versioned trace schema | **done** |
 | 6 | HTML viewer: call tree, timeline scrubber, value inspector | **done** |
-| 7 | Overhead benchmark: throughput and p99, agent off vs on | next |
-| 8 | Demo: a null born three layers below where it throws | |
+| 7 | Overhead benchmark: throughput and p99, agent off vs on | **done** |
+| 8 | Demo: a null born three layers below where it throws | next |
 
 ## Try it
 
@@ -150,6 +149,49 @@ absolute clock in the document, because a `nanoTime` reading means nothing outsi
 took it. `entryPoint` is recorded rather than derived from event zero, which stops being the entry
 point as soon as the ring has dropped anything.
 
+## What it costs
+
+```bash
+./mvnw package && java -jar hindsight-benchmark/target/hindsight-benchmark.jar
+```
+
+Five forks per configuration, interleaved, on an M-series Mac under JDK 25. The workload is a
+service-layer request — validate against a set, look up a map, build a couple of strings — with
+**14 instrumented method calls per request**, a figure the harness gets by asking the agent rather
+than by counting into a comment.
+
+| configuration | throughput | p50 | p99 | p99.9 | added per instrumented call |
+|---|---|---|---|---|---|
+| no agent | 13,587,000/s | — | 0.17µs | 0.96µs | — |
+| attached, nothing selected | 13,561,000/s | — | 0.17µs | 0.88µs | **0ns** |
+| recording, types only | 920,900/s | 1.04µs | 1.38µs | 2.58µs | **72ns** |
+| recording, values summarised | 654,400/s | 1.29µs | 3.29µs | 4.42µs | **104ns** |
+
+**Attaching the agent without selecting any packages costs nothing measurable.** Recording costs
+roughly **70–100ns per instrumented method call**, depending on whether values are rendered.
+
+That per-call figure is the number worth quoting, because it is the only one that transfers. The
+throughput ratio belongs to this workload: an uninstrumented request here costs about 74ns, so
+fourteen recorded method boundaries dominate it completely. Code that does any I/O at all would
+show a ratio nowhere near this one. Multiply 70–100ns by however many of your own methods sit
+inside a request and you have the answer for your service.
+
+Honesty notes, because a benchmark without them is a marketing claim:
+
+- Throughput and latency are measured in **separate passes**. A `nanoTime` pair costs ~17ns, which
+  is a rounding error against an instrumented request and a large fraction of an uninstrumented
+  one; timing every request while measuring throughput would tax the baseline hardest and flatter
+  the agent.
+- Forks are **interleaved**, not grouped by configuration. Grouped, thermal drift put the idle
+  agent at 1.16x *faster* than no agent. Interleaved, it sits at 1.00x, which is the truth.
+- The p50 column is blank for the two fast configurations because a 74ns request cannot be
+  meaningfully timed with a 17ns clock pair.
+- Every fork's throughput is printed by the harness so the spread can be judged rather than trusted.
+- One machine, not a controlled environment. Treat as an order of magnitude.
+
+Memory is the other half of the cost: a traced thread holds one ring buffer, about 38KB at the
+default 1024 events, allocated on that thread's first recorded event and collected when it dies.
+
 ## Configuration
 
 All settings are `-Dhindsight.*` system properties, read once at startup. A mistyped value is
@@ -176,6 +218,7 @@ asking for `java` does not get you an instrumented `java.lang.String`.
 | `hindsight-agent` | The agent. Shaded, with Byte Buddy relocated. |
 | `hindsight-testapp` | A tiny application used as an instrumentation target by the tests. |
 | `hindsight-viewer` | One HTML file. Not a Maven module; there is nothing to build. |
+| `hindsight-benchmark` | The overhead harness and the workload it measures. |
 
 Inside the agent, `dev.hindsight.agent` decides what to instrument and runs once at startup;
 `dev.hindsight.runtime` is what application threads call into, twice per traced invocation;
