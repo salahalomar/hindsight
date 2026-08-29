@@ -28,6 +28,7 @@
     <!-- testapp first: the agent's integration test runs against its packaged jar. -->
     <module>hindsight-testapp</module>
     <module>hindsight-agent</module>
+    <module>hindsight-benchmark</module>
   </modules>
 
   <properties>
