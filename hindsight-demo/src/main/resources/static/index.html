@@ -70,6 +70,8 @@
   .verdict b { color: var(--ink); font-weight: 700; }
   .empty { color: var(--faint); }
   footer { padding: 0 26px 30px; color: var(--faint); }
+  a { color: var(--dim); }
+  a:hover { color: var(--ink); }
 </style>
 </head>
 <body>
@@ -106,8 +108,8 @@
 </main>
 
 <footer>
-  Traces are written to the directory given by <code>-Dhindsight.trace.dir</code>. Open one in
-  <code>hindsight-viewer/hindsight-viewer.html</code> to step through it.
+  Traces are written to the directory given by <code>-Dhindsight.trace.dir</code>.
+  Open <a href="/hindsight-viewer.html">the trace viewer</a> to step through one, backwards.
 </footer>
 
 <script>

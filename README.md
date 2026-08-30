@@ -73,21 +73,23 @@ that surprises people in production.
 
 Both are plain HTML and JavaScript. No build step, no dependencies, nothing loaded from anywhere.
 
-**The trace viewer** — open `hindsight-viewer/hindsight-viewer.html` in a browser. Press *Load a
-sample trace* to see it working straight away; otherwise drop a trace file on it, choose one, or
-paste the JSON. It runs from a local file with no server, so it is one thing you can attach to a
-ticket. Arrow keys step through the recording, and selecting an exit shows what its frame was
-*entered with*.
-
-**The demo console** — run the demo service and open `http://localhost:8080`:
+Run the demo service and both are at `localhost:8080`:
 
 ```bash
 java -Dhindsight.packages=sample.shop -javaagent:hindsight-agent/target/hindsight-agent.jar -jar hindsight-demo/target/hindsight-demo.jar
 ```
 
-Press *checkout order-2*: the page puts the JVM's own stack trace beside the whole recorded request,
-with the frame that produced the null marked as its origin. *checkout order-1* succeeds and writes
-nothing, because a trace is only produced when an exception escapes.
+**The console**, at `/` — press *checkout order-2* and the page puts the JVM's own stack trace beside
+the whole recorded request, with the frame that produced the null marked as its origin. *checkout
+order-1* succeeds and writes nothing, because a trace is only produced when an exception escapes.
+
+**The trace viewer**, at `/hindsight-viewer.html` — press *Load a sample trace* to see it working
+straight away; otherwise drop a trace file on it, choose one, or paste the JSON. Arrow keys step
+through the recording, and selecting an exit shows what its frame was *entered with*.
+
+The viewer is served here for convenience, but it is still one self-contained file with no server
+requirement: `hindsight-viewer/hindsight-viewer.html` opens straight from disk and behaves
+identically. The build copies it rather than keeping a second copy in source control.
 
 Both are set in one monospace face on square edges, with rules instead of cards and no gradients,
 shadows, transitions or animation. The only colour in either page marks a thrown exception — an

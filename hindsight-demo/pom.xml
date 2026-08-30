@@ -63,6 +63,36 @@
         </executions>
       </plugin>
 
+      <!--
+        Serves the viewer alongside the console so the whole demo is reachable from one address.
+        Copied at build time rather than duplicated in source control: there is still exactly one
+        viewer, in hindsight-viewer, and it remains openable straight from disk with no server.
+      -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-resources-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>copy-viewer</id>
+            <phase>process-resources</phase>
+            <goals>
+              <goal>copy-resources</goal>
+            </goals>
+            <configuration>
+              <outputDirectory>${project.build.outputDirectory}/static</outputDirectory>
+              <resources>
+                <resource>
+                  <directory>${project.basedir}/../hindsight-viewer</directory>
+                  <includes>
+                    <include>hindsight-viewer.html</include>
+                  </includes>
+                </resource>
+              </resources>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-failsafe-plugin</artifactId>
