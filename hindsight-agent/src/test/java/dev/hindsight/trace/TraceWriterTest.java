@@ -91,18 +91,34 @@ class TraceWriterTest {
     }
 
     @Test
-    @DisplayName("a directory it cannot create is reported once, then never again")
-    void reportsFailureOnce(@TempDir Path directory) throws IOException {
-        // A read-only or otherwise unusable trace directory is an ordinary deployment, not an
-        // exceptional one. Here a plain file stands where the directory should be.
+    @DisplayName("a hiccup is not a reason to stay blind for the rest of the process's life")
+    void recoversFromATransientFailure(@TempDir Path directory) throws IOException {
+        // A full disk that is later freed, or a directory rotated away underneath us: the write
+        // fails, and then conditions change. Here a plain file stands where the directory should
+        // be, and is then removed.
+        Path traces = directory.resolve("traces");
+        Files.createFile(traces);
+        TraceWriter writer = writerFor(traces, 10);
+
+        assertNull(writer.write("main", "T", "m", buffer()), "the obstruction should have stopped it");
+        Files.delete(traces);
+
+        assertNotNull(writer.write("main", "T", "m", buffer()),
+                "the obstruction is gone, so the next failure should be recorded");
+    }
+
+    @Test
+    @DisplayName("a run of failures is the configuration, not the weather, and it does give up")
+    void givesUpAfterARunOfFailures(@TempDir Path directory) throws IOException {
         Path blocked = Files.createFile(directory.resolve("in-the-way"));
+        TraceWriter writer = writerFor(blocked, 20);
 
-        TraceWriter writer = writerFor(blocked, 10);
+        for (int attempt = 0; attempt < 4; attempt++) {
+            assertNull(writer.write("main", "T", "m", buffer()));
+        }
 
-        assertNull(writer.write("main", "T", "m", buffer()));
-        assertNull(writer.write("main", "T", "m", buffer()));
-
-        assertEquals(1, messages.size(), messages.toString());
-        assertTrue(messages.getFirst().contains("cannot write traces to"), messages.toString());
+        // Two warnings that it would try again, then one saying it has stopped, and nothing after.
+        assertEquals(3, messages.size(), messages.toString());
+        assertTrue(messages.getLast().contains("giving up"), messages.toString());
     }
 }

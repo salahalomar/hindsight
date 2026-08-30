@@ -26,12 +26,21 @@ public final class TraceWriter {
 
     private static final int MAX_THREAD_NAME = 40;
 
+    /**
+     * Consecutive failures tolerated before giving up. A full disk that is later freed, a directory
+     * rotated away underneath us, a momentary NFS stall: none of those are reasons to stay blind
+     * for the rest of the process's life, which is what latching on the first failure meant. A run
+     * of them is a reason, because by then it is the configuration and not the weather.
+     */
+    private static final int TOLERATED_FAILURES = 3;
+
     private final Path directory;
     private final int maxFiles;
     private final String agentVersion;
     private final Consumer<String> log;
 
     private final AtomicInteger attempted = new AtomicInteger();
+    private final AtomicInteger consecutiveFailures = new AtomicInteger();
     private final AtomicBoolean stopped = new AtomicBoolean();
 
     public TraceWriter(Path directory, int maxFiles, String agentVersion, Consumer<String> log) {
@@ -65,11 +74,18 @@ public final class TraceWriter {
             TraceHeader header = new TraceHeader(
                     agentVersion, threadName, entryType, entryMethod, Instant.now());
             Files.writeString(file, TraceSerialiser.serialise(header, buffer), StandardCharsets.UTF_8);
+            consecutiveFailures.set(0);
             log.accept("trace written to " + file);
             return file;
         } catch (Throwable failure) {
             // A read-only working directory is an ordinary deployment, not an exceptional one.
-            stop("cannot write traces to " + directory + ", giving up (" + failure + ")");
+            if (consecutiveFailures.incrementAndGet() >= TOLERATED_FAILURES) {
+                stop("cannot write traces to " + directory + " after " + TOLERATED_FAILURES
+                        + " attempts, giving up (" + failure + ")");
+            } else {
+                log.accept("could not write a trace to " + directory + " (" + failure
+                        + "); will try again on the next failure");
+            }
             return null;
         }
     }
