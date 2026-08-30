@@ -23,8 +23,9 @@ difficulty — is the premise of the project, not a limitation it is embarrassed
 
 ## Status
 
-**Step 7 of 8.** The agent records, writes a trace when a request fails, and the viewer opens it.
-The overhead is measured rather than asserted. What remains is the demo.
+**All eight steps done.** The agent records, writes a trace when a request fails, and the viewer
+opens it. The overhead is measured rather than asserted, and there is a Spring Boot service with a
+planted bug to show what the trace answers that a stack trace cannot.
 
 | Step | | |
 |---|---|---|
@@ -35,7 +36,7 @@ The overhead is measured rather than asserted. What remains is the demo.
 | 5 | Dump-on-exception and a versioned trace schema | **done** |
 | 6 | HTML viewer: call tree, timeline scrubber, value inspector | **done** |
 | 7 | Overhead benchmark: throughput and p99, agent off vs on | **done** |
-| 8 | Demo: a null born three layers below where it throws | next |
+| 8 | Demo: a null born three layers below where it throws | **done** |
 
 ## Try it
 
@@ -70,55 +71,49 @@ that surprises people in production.
 
 ## What a trace is for
 
-Run the test application's failing path and the JVM tells you this:
+`hindsight-demo` is a Spring Boot service with one planted bug. `AddressBook.addressFor` returns
+`null` for an unknown order; that null is stored inside a `Customer`, handed back up, and only
+dereferenced later by `ShippingCalculator`.
 
-```
-Exception in thread "main" java.lang.NullPointerException: Cannot invoke "String.strip()" ...
-	at sample.testapp.Greeting.normalise(Greeting.java:15)
-	at sample.testapp.TestApp.greet(TestApp.java:50)
-	at sample.testapp.TestApp.main(TestApp.java:34)
-```
-
-Three frames, and every one of them is where the null *arrived*. The trace written alongside it
-says where it came from:
-
-```json
-{"seq":1,"kind":"enter","depth":1,"type":"sample.testapp.TestApp","method":"greet","arguments":"null"},
-{"seq":2,"kind":"enter","depth":2,"type":"sample.testapp.Greeting","method":"normalise","arguments":""},
-{"seq":3,"kind":"throw","depth":2,"type":"sample.testapp.Greeting","method":"normalise","thrown":"NullPointerException: ..."}
+```bash
+java -Dhindsight.packages=sample.shop -javaagent:hindsight-agent/target/hindsight-agent.jar -jar hindsight-demo/target/hindsight-demo.jar
 ```
 
-`greet` was *entered* with a null. That is one frame above where the exception was thrown and it is
-the frame a stack trace cannot tell you about, because by then the argument is gone.
-
-## The viewer
-
-Open `hindsight-viewer/hindsight-viewer.html` in a browser and give it a trace — drop the file on
-it, pick it, or paste the JSON. There is no server, no build step and no network access; it is one
-file you can attach to a ticket.
-
 ```
-CALL TREE                                                    VALUE INSPECTOR
- 0.000ms -> TestApp.main(String[1]@6ea2bc93)                  Kind    throw
- 0.007ms   -> TestApp.greet(null)                             Frame   TestApp.greet
- 2.212ms     -> Greeting.normalise()                          Depth   1
- 2.379ms     <! Greeting.normalise threw NPE        0.167ms   Took    2.384ms
- 2.390ms   <! TestApp.greet threw NPE               2.384ms
- 2.397ms <! TestApp.main threw NPE                  2.397ms   THROWN
-                                                              NullPointerException: ...
-                                                              ENTERED WITH
-                                                              null
+curl localhost:8080/checkout/order-1   ->  200  {"orderId":"order-1","postcode":"EH1 1AA","pence":420}
+curl localhost:8080/checkout/order-2   ->  500
 ```
 
-Arrow keys step through the recording and the scrubber jumps anywhere in it. Selecting an exit shows
-what its frame was **entered with** — which is the question a stack trace cannot answer, and is
-usually where the answer is.
+The JVM's account of the failure:
 
-The viewer refuses a schema version it does not recognise rather than guessing, says so when a
-recording is incomplete, and labels an event kind it does not know as unknown rather than assuming
-it was a throw. A Java test reads the field names back off a document the serialiser actually
-produced and fails if the viewer does not know one of them, so the two halves of the format cannot
-drift apart unnoticed.
+```
+java.lang.NullPointerException: Cannot invoke "sample.shop.Address.postcode()"
+        because the return value of "sample.shop.Customer.address()" is null
+    at sample.shop.ShippingCalculator.quote(ShippingCalculator.java:14)
+    at sample.shop.CheckoutService.checkout(CheckoutService.java:18)
+    at sample.shop.CheckoutController.checkout(CheckoutController.java:22)
+```
+
+Three frames, and **the method that produced the null is not one of them**. It returned long before
+anything dereferenced it, so no stack trace can mention it. The trace written alongside can:
+
+```
+seq  0    0.000ms  -> CheckoutController.checkout(String "order-2")
+seq  1    0.002ms    -> CheckoutService.checkout(String "order-2")
+seq  2    0.003ms      -> CustomerRepository.findById(String "order-2")
+seq  5    0.009ms        -> AddressBook.addressFor(String "order-2")
+seq  6    0.011ms        <- AddressBook.addressFor returned null              <-- born here
+seq  7    0.059ms      <- CustomerRepository.findById returned Customer[..., address=null]
+seq  8    0.066ms      -> ShippingCalculator.quote(Customer[..., address=null])
+seq 11    0.165ms      <! ShippingCalculator.quote threw NullPointerException  <-- died here
+seq 13    0.176ms  <! CheckoutController.checkout threw NullPointerException
+```
+
+Five events and 154 microseconds separate where the null was created from where it became fatal,
+and you can watch it travel: returned bare, then carried inside a `Customer`, then passed along.
+
+An integration test asserts both halves of that claim — that `AddressBook.addressFor` is absent from
+the stack trace, and present in the recording, returning `null`, before the throw.
 
 ## Trace format
 
@@ -219,6 +214,7 @@ asking for `java` does not get you an instrumented `java.lang.String`.
 | `hindsight-testapp` | A tiny application used as an instrumentation target by the tests. |
 | `hindsight-viewer` | One HTML file. Not a Maven module; there is nothing to build. |
 | `hindsight-benchmark` | The overhead harness and the workload it measures. |
+| `hindsight-demo` | A Spring Boot service with the planted bug, and the test that pins the claim. |
 
 Inside the agent, `dev.hindsight.agent` decides what to instrument and runs once at startup;
 `dev.hindsight.runtime` is what application threads call into, twice per traced invocation;
@@ -263,6 +259,13 @@ application code, so:
 What is deliberately *not* defended against is a `toString` that is merely slow. Bounding that needs
 a watchdog thread and the ability to interrupt application code mid-call, which is more dangerous
 than the problem. `-Dhindsight.values=type` is the answer there, and it calls nothing at all.
+
+**Advice reaches the recorder from inside a Spring Boot fat jar.** This was the open risk from the
+very first commit: Byte Buddy inlines advice into the target method, so the recorder has to be
+resolvable by the class loader of the class being instrumented — and Spring Boot loads application
+classes from `BOOT-INF` with its own loader while the agent sits on the system class path. The
+delegation holds, and `hindsight-demo` exercises it rather than reasoning about it. Had it not held,
+every instrumented method would have failed with `NoClassDefFoundError`.
 
 **The viewer is one file with no build step and no dependencies.** It has to open from a `file://`
 URL on a laptop with no network, because that is the situation somebody reading a trace is usually
