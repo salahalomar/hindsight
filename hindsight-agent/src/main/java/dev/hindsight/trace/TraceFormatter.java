@@ -47,6 +47,10 @@ public final class TraceFormatter {
         if (buffer.beyondMaxDepth() > 0) {
             header.append(", ").append(buffer.beyondMaxDepth()).append(" beyond max depth");
         }
+        if (buffer.unbalancedExits() > 0) {
+            header.append(", ").append(buffer.unbalancedExits())
+                    .append(" exits with no matching entry");
+        }
         return header.toString();
     }
 

@@ -46,7 +46,10 @@ public final class TraceSerialiser {
         // A truncated trace that does not say so reads as a complete account of what happened.
         Json.quoted(out, "truncation").append(":{");
         Json.member(out, "droppedToRing", buffer.dropped()).append(',');
-        Json.member(out, "beyondMaxDepth", buffer.beyondMaxDepth()).append("},\n  ");
+        Json.member(out, "beyondMaxDepth", buffer.beyondMaxDepth()).append(',');
+        // Added rather than replacing anything, so a reader of the previous version still works.
+        // By the rule above that is not a schema change.
+        Json.member(out, "unbalancedExits", buffer.unbalancedExits()).append("},\n  ");
 
         Json.quoted(out, "events").append(":[");
         long origin = buffer.size() > 0 ? buffer.nanosAt(0) : 0L;

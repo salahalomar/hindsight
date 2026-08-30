@@ -82,8 +82,8 @@ class RingBufferTest {
         }
 
         @Test
-        @DisplayName("an unmatched exit cannot drive the depth negative")
-        void clampsAtZero() {
+        @DisplayName("an unmatched exit cannot drive the depth negative, and is counted")
+        void countsAnUnmatchedExitRatherThanAbsorbingIt() {
             RingBuffer buffer = buffer(16, 8);
 
             buffer.recordReturn(TYPE, "orphan", "void");
@@ -92,6 +92,20 @@ class RingBufferTest {
             // thrown into an application in the middle of returning from a method.
             assertEquals(0, buffer.depth());
             assertEquals(0, buffer.depthAt(0));
+            // But it must be visible. Silently clamping made a recording that had lost its
+            // beginning indistinguishable from a complete one.
+            assertEquals(1, buffer.unbalancedExits());
+        }
+
+        @Test
+        @DisplayName("a balanced trace reports no imbalance")
+        void countsNothingWhenNothingIsLost() {
+            RingBuffer buffer = buffer(16, 8);
+
+            buffer.recordEnter(TYPE, "main", "");
+            buffer.recordReturn(TYPE, "main", "void");
+
+            assertEquals(0, buffer.unbalancedExits());
         }
 
         @Test
@@ -189,5 +203,6 @@ class RingBufferTest {
         assertEquals(0, buffer.depth());
         assertEquals(0, buffer.dropped());
         assertEquals(0, buffer.beyondMaxDepth());
+        assertEquals(0, buffer.unbalancedExits());
     }
 }

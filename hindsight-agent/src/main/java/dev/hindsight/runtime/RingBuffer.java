@@ -38,6 +38,7 @@ public final class RingBuffer {
 
     private int depth;
     private long beyondMaxDepth;
+    private long unbalancedExits;
 
     /**
      * @param capacity number of events, must be a power of two so the ring indexes by masking
@@ -77,12 +78,21 @@ public final class RingBuffer {
     }
 
     /**
-     * Clamped at zero. A negative depth would mean the agent had lost track of the call stack, and
-     * the useful response to that is a slightly wrong trace rather than an exception thrown into an
-     * application in the middle of returning from a method.
+     * An exit at depth zero has no matching entry, which means the agent lost track of the call
+     * stack: an entry was never recorded, most likely because something failed while recording it.
+     *
+     * <p>Still clamped, because a negative depth helps nobody and throwing here would put an
+     * exception into an application in the middle of returning from a method. But it is now
+     * counted rather than absorbed. Silently clamping made a trace that had lost its beginning
+     * indistinguishable from a complete one, and a recording that quietly overstates what it knows
+     * is worse than one that admits it is missing something.
      */
     private void leaveFrame() {
-        depth = Math.max(0, depth - 1);
+        if (depth == 0) {
+            unbalancedExits++;
+            return;
+        }
+        depth--;
     }
 
     private void append(EventKind kind, String type, String method, String detail) {
@@ -116,6 +126,7 @@ public final class RingBuffer {
         written = 0;
         depth = 0;
         beyondMaxDepth = 0;
+        unbalancedExits = 0;
     }
 
     public int depth() {
@@ -138,6 +149,14 @@ public final class RingBuffer {
     /** Events suppressed for being deeper than {@code maxDepth}. */
     public long beyondMaxDepth() {
         return beyondMaxDepth;
+    }
+
+    /**
+     * Exits recorded with no matching entry. Any number above zero means this recording is missing
+     * frames it never saw the start of, and should not be read as a complete account.
+     */
+    public long unbalancedExits() {
+        return unbalancedExits;
     }
 
     public EventKind kindAt(int index) {
