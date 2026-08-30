@@ -16,7 +16,13 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * trace shows {@code AddressBook.addressFor returned null} several events before the throw, in a
  * frame the stack trace does not mention at all.
  */
-@SpringBootApplication
+/*
+ * The console lives in demo.console, outside this package tree, so that pointing the agent at
+ * sample.shop does not record the console reading traces into the traces. Component scanning
+ * starts from this class's own package, so that package has to be named explicitly: the isolation
+ * that keeps the console out of the recording also keeps it out of the scan.
+ */
+@SpringBootApplication(scanBasePackages = {"sample.shop", "demo.console"})
 public class ShopApplication {
 
     public static void main(String[] args) {

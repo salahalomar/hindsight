@@ -100,7 +100,9 @@ class PlantedBugIT {
         // This is the premise of the project, asserted rather than claimed. The null is produced by
         // AddressBook.addressFor, which returns long before anything dereferences it, so by the
         // time the exception exists that frame is gone and no stack trace can mention it.
-        String stackTrace = log.substring(log.indexOf("NullPointerException"));
+        int thrown = log.indexOf("NullPointerException");
+        assertTrue(thrown >= 0, "the service did not log the failure at all:\n" + log);
+        String stackTrace = log.substring(thrown);
 
         assertTrue(stackTrace.contains("ShippingCalculator.quote"),
                 "the stack trace should name where the exception surfaced");

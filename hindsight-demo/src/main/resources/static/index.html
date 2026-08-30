@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hindsight demo console</title>
+<style>
+  /*
+   * Deliberately plain. This is a debugger: everything it shows is code, so it is set in one
+   * monospace face, on square edges, with rules instead of cards. Colour is not decoration here --
+   * the only hue in the whole page marks a thrown exception. Everything else earns attention by
+   * contrast, with the trace dimmed and the one line that matters left at full strength.
+   */
+  :root {
+    --bg: #ffffff; --ink: #111111; --dim: #767676; --faint: #a6a6a6;
+    --rule: #d9d9d9; --alert: #98241a; --mark: #f2efe6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d0d0f; --ink: #dcdad6; --dim: #83817d; --faint: #56555a;
+      --rule: #2a2a2e; --alert: #d4776a; --mark: #1c1b20;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  header { padding: 22px 26px 14px; }
+  h1 { margin: 0 0 10px; font-size: 13px; font-weight: 700; }
+  h1 span { color: var(--dim); font-weight: 400; }
+  header p { margin: 0; max-width: 92ch; color: var(--dim); }
+  header p b { color: var(--ink); font-weight: 700; }
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 0; }
+  main { padding: 16px 26px 40px; }
+  .controls { display: flex; gap: 8px; align-items: baseline; margin-bottom: 18px; }
+  button {
+    font: inherit; color: var(--ink); background: transparent;
+    border: 1px solid var(--rule); border-radius: 0; padding: 4px 10px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--ink); }
+  button:disabled { color: var(--faint); border-color: var(--rule); cursor: default; }
+  #status { color: var(--dim); margin-left: 6px; }
+  #status.bad { color: var(--alert); }
+  .panes { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
+  .panes > div + div { border-left: 1px solid var(--rule); }
+  @media (max-width: 1000px) {
+    .panes { grid-template-columns: 1fr; }
+    .panes > div + div { border-left: 0; border-top: 1px solid var(--rule); }
+  }
+  .pane h2 {
+    margin: 0; padding: 0 0 6px; font-size: 13px; font-weight: 400; color: var(--dim);
+    border-bottom: 1px solid var(--rule);
+  }
+  .panes > div { padding: 14px 18px 16px; }
+  .panes > div:first-child { padding-left: 0; }
+  .body { padding-top: 10px; max-height: 58vh; overflow: auto; }
+  pre { margin: 0; white-space: pre; overflow-x: auto; color: var(--dim); }
+  pre .head { white-space: pre-wrap; }
+  pre .head { color: var(--ink); }
+  .row { white-space: pre; color: var(--faint); }
+  .row .arrow { color: var(--faint); }
+  /* The one line the whole exercise is about is simply the one that is not dimmed. */
+  .row.birth { color: var(--ink); background: var(--mark); }
+  .row.birth .arrow { color: var(--ink); }
+  .row.origin::after { content: "   <- origin"; color: var(--dim); }
+  .row.throw { color: var(--alert); }
+  .row.throw .arrow { color: var(--alert); }
+  .verdict { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--rule); color: var(--dim); max-width: 110ch; }
+  .verdict b { color: var(--ink); font-weight: 700; }
+  .empty { color: var(--faint); }
+  footer { padding: 0 26px 30px; color: var(--faint); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>hindsight <span>/ demo console</span></h1>
+  <p>
+    <b>A recording, not a replay.</b> Run a checkout below. One order has an address and succeeds;
+    the other does not, and fails three frames away from the cause. The stack trace and the
+    recording are shown side by side, so you can see what each one knows.
+  </p>
+</header>
+<hr>
+
+<main>
+  <div class="controls">
+    <button id="works" type="button">checkout order-1</button>
+    <button id="fails" type="button">checkout order-2</button>
+    <span id="status">ready &mdash; order-1 has an address, order-2 does not</span>
+  </div>
+
+  <div class="panes">
+    <div class="pane">
+      <h2>What the stack trace tells you</h2>
+      <div class="body" id="stack"><p class="empty">Run a checkout.</p></div>
+    </div>
+    <div class="pane">
+      <h2>What hindsight recorded, for the whole request</h2>
+      <div class="body" id="trace"><p class="empty">Run a checkout.</p></div>
+    </div>
+  </div>
+
+  <div id="verdict"></div>
+</main>
+
+<footer>
+  Traces are written to the directory given by <code>-Dhindsight.trace.dir</code>. Open one in
+  <code>hindsight-viewer/hindsight-viewer.html</code> to step through it.
+</footer>
+
+<script>
+"use strict";
+
+var el = function (id) { return document.getElementById(id); };
+
+function status(text, kind) {
+  var line = el("status");
+  line.textContent = text;
+  line.className = kind || "";
+}
+
+function empty(node, message) {
+  node.innerHTML = "";
+  var p = document.createElement("p");
+  p.className = "empty";
+  p.textContent = message;
+  node.appendChild(p);
+}
+
+/** Only the application's own frames; the servlet stack underneath is noise here. */
+function applicationFrames(stackTrace) {
+  var lines = stackTrace.split("\n");
+  var kept = [lines[0]];
+  for (var i = 1; i < lines.length; i++) {
+    if (lines[i].indexOf("sample.shop") >= 0) {
+      kept.push(lines[i].trim());
+    }
+  }
+  return kept.join("\n");
+}
+
+function renderStack(body) {
+  var node = el("stack");
+  node.innerHTML = "";
+  if (!body || !body.trace) {
+    empty(node, "The request succeeded, so there is no stack trace.");
+    return null;
+  }
+  var frames = applicationFrames(body.trace);
+  var pre = document.createElement("pre");
+  var head = document.createElement("span");
+  head.className = "head";
+  head.textContent = frames.split("\n")[0] + "\n";
+  pre.appendChild(head);
+  pre.appendChild(document.createTextNode(frames.split("\n").slice(1).join("\n")));
+  node.appendChild(pre);
+  return frames;
+}
+
+function signature(event) {
+  var frame = event.type.replace("sample.shop.", "") + "." + event.method;
+  if (event.kind === "enter") { return ["->", frame + "(" + (event.arguments || "") + ")"]; }
+  if (event.kind === "return") { return ["<-", frame + " returned " + event.returned]; }
+  if (event.kind === "throw") { return ["<!", frame + " threw " + event.thrown]; }
+  return ["??", frame];
+}
+
+function renderTrace(trace) {
+  var node = el("trace");
+  node.innerHTML = "";
+  var born = null;
+  trace.events.forEach(function (event) {
+    var parts = signature(event);
+    var row = document.createElement("div");
+    row.className = "row " + event.kind;
+    // The moment a null is handed back is the thing worth looking at, so it is marked.
+    if (event.kind === "return" && event.returned === "null") {
+      row.classList.add("birth");
+      // Later frames hand the same null onwards; only the first one created it.
+      if (born === null) {
+        born = event;
+        row.classList.add("origin");
+      }
+    }
+    var arrow = document.createElement("span");
+    arrow.className = "arrow";
+    arrow.textContent = "  ".repeat(event.depth) + parts[0] + " ";
+    row.appendChild(arrow);
+    row.appendChild(document.createTextNode(parts[1]));
+    node.appendChild(row);
+  });
+  return born;
+}
+
+function renderVerdict(frames, born, trace) {
+  var node = el("verdict");
+  node.innerHTML = "";
+  if (!born) { return; }
+  var origin = born.type.replace("sample.shop.", "") + "." + born.method;
+  var inStack = frames && frames.indexOf(born.method) >= 0;
+  var thrown = trace.events.filter(function (e) { return e.kind === "throw"; })[0];
+  var box = document.createElement("div");
+  box.className = "verdict";
+  box.innerHTML = "The null was returned by <b>" + origin + "</b> after "
+    + (born.offsetNanos / 1e6).toFixed(3) + "ms, and the exception was thrown "
+    + ((thrown.offsetNanos - born.offsetNanos) / 1e6).toFixed(3) + "ms later in <b>"
+    + thrown.method + "</b>. That method appears in the stack trace above; <b>" + origin
+    + "</b> " + (inStack ? "also does." : "does not, because it had already returned.");
+  node.appendChild(box);
+}
+
+async function run(order) {
+  el("works").disabled = true;
+  el("fails").disabled = true;
+  status("running " + order + "\u2026");
+  try {
+    var response = await fetch("/checkout/" + order);
+    var body = await response.json();
+    status(response.ok
+        ? "HTTP " + response.status + " \u2014 nothing failed, so nothing was recorded"
+        : "HTTP " + response.status + " \u2014 the request failed and a trace was written",
+        response.ok ? "" : "bad");
+
+    var frames = renderStack(body);
+
+    if (response.ok) {
+      empty(el("trace"), "Nothing failed, so nothing was recorded. A trace is only written when an "
+        + "exception escapes the request.");
+      el("verdict").innerHTML = "";
+      return;
+    }
+
+    var listing = await (await fetch("/api/traces")).json();
+    if (!listing.length) {
+      empty(el("trace"), "No trace file was found. Is the agent attached?");
+      return;
+    }
+    var trace = await (await fetch("/api/traces/" + encodeURIComponent(listing[0].name))).json();
+    var born = renderTrace(trace);
+    renderVerdict(frames, born, trace);
+  } catch (failure) {
+    status("failed", "bad");
+    empty(el("trace"), String(failure));
+  } finally {
+    el("works").disabled = false;
+    el("fails").disabled = false;
+  }
+}
+
+el("works").addEventListener("click", function () { run("order-1"); });
+el("fails").addEventListener("click", function () { run("order-2"); });
+</script>
+</body>
+</html>
