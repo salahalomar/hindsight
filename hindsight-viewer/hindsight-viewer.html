@@ -156,7 +156,7 @@
 
 <footer>hindsight &mdash; a time-travel debugger for the JVM. Reads <code>hindsight.trace/1</code>.</footer>
 
-<script type="application/json" id="sample-trace">{"schema":"hindsight.trace/1","agent":"0.1.0-SNAPSHOT","recordedAt":"2026-08-30T09:47:43.139104Z","thread":"http-nio-8080-exec-1","entryPoint":{"type":"sample.shop.CheckoutController","method":"checkout"},"truncation":{"droppedToRing":0,"beyondMaxDepth":0},"events":[{"seq":0,"kind":"enter","depth":0,"offsetNanos":0,"type":"sample.shop.CheckoutController","method":"checkout","arguments":"String \"order-2\""},{"seq":1,"kind":"enter","depth":1,"offsetNanos":5166,"type":"sample.shop.CheckoutService","method":"checkout","arguments":"String \"order-2\""},{"seq":2,"kind":"enter","depth":2,"offsetNanos":9041,"type":"sample.shop.CustomerRepository","method":"findById","arguments":"String \"order-2\""},{"seq":3,"kind":"enter","depth":3,"offsetNanos":34250,"type":"sample.shop.CustomerRepository","method":"nameFor","arguments":"String \"order-2\""},{"seq":4,"kind":"return","depth":3,"offsetNanos":56666,"type":"sample.shop.CustomerRepository","method":"nameFor","returned":"String \"customer-order-2\""},{"seq":5,"kind":"enter","depth":3,"offsetNanos":60583,"type":"sample.shop.AddressBook","method":"addressFor","arguments":"String \"order-2\""},{"seq":6,"kind":"return","depth":3,"offsetNanos":64083,"type":"sample.shop.AddressBook","method":"addressFor","returned":"null"},{"seq":7,"kind":"return","depth":2,"offsetNanos":449750,"type":"sample.shop.CustomerRepository","method":"findById","returned":"Customer@22232989 \"Customer[id=order-2, name=customer-order-2, address=null]\""},{"seq":8,"kind":"enter","depth":2,"offsetNanos":466583,"type":"sample.shop.ShippingCalculator","method":"quote","arguments":"Customer@22232989 \"Customer[id=order-2, name=customer-order-2, address=null]\""},{"seq":9,"kind":"enter","depth":3,"offsetNanos":468375,"type":"sample.shop.Customer","method":"address","arguments":""},{"seq":10,"kind":"return","depth":3,"offsetNanos":469458,"type":"sample.shop.Customer","method":"address","returned":"null"},{"seq":11,"kind":"throw","depth":2,"offsetNanos":536875,"type":"sample.shop.ShippingCalculator","method":"quote","thrown":"NullPointerException: (115) \"Cannot invoke \\\"sample.shop.Address.postcode()\\\" because the retur...\""},{"seq":12,"kind":"throw","depth":1,"offsetNanos":544541,"type":"sample.shop.CheckoutService","method":"checkout","thrown":"NullPointerException: (115) \"Cannot invoke \\\"sample.shop.Address.postcode()\\\" because the retur...\""},{"seq":13,"kind":"throw","depth":0,"offsetNanos":552041,"type":"sample.shop.CheckoutController","method":"checkout","thrown":"NullPointerException: (115) \"Cannot invoke \\\"sample.shop.Address.postcode()\\\" because the retur...\""}]}</script>
+<script type="application/json" id="sample-trace">{"schema":"hindsight.trace/1","agent":"0.1.0-SNAPSHOT","recordedAt":"2026-08-30T10:37:18.196434Z","thread":"http-nio-127.0.0.1-8080-exec-2","entryPoint":{"type":"sample.shop.CheckoutController","method":"checkout"},"truncation":{"droppedToRing":0,"beyondMaxDepth":0,"unbalancedExits":0},"events":[{"seq":0,"kind":"enter","depth":0,"offsetNanos":0,"type":"sample.shop.CheckoutController","method":"checkout","arguments":"String \"order-2\""},{"seq":1,"kind":"enter","depth":1,"offsetNanos":5333,"type":"sample.shop.CheckoutService","method":"checkout","arguments":"String \"order-2\""},{"seq":2,"kind":"enter","depth":2,"offsetNanos":10250,"type":"sample.shop.CustomerRepository","method":"findById","arguments":"String \"order-2\""},{"seq":3,"kind":"enter","depth":3,"offsetNanos":37708,"type":"sample.shop.CustomerRepository","method":"nameFor","arguments":"String \"order-2\""},{"seq":4,"kind":"return","depth":3,"offsetNanos":61625,"type":"sample.shop.CustomerRepository","method":"nameFor","returned":"String \"customer-order-2\""},{"seq":5,"kind":"enter","depth":3,"offsetNanos":65500,"type":"sample.shop.AddressBook","method":"addressFor","arguments":"String \"order-2\""},{"seq":6,"kind":"return","depth":3,"offsetNanos":69333,"type":"sample.shop.AddressBook","method":"addressFor","returned":"null"},{"seq":7,"kind":"return","depth":2,"offsetNanos":527375,"type":"sample.shop.CustomerRepository","method":"findById","returned":"Customer@73581df4 \"Customer[id=order-2, name=customer-order-2, address=null]\""},{"seq":8,"kind":"enter","depth":2,"offsetNanos":545791,"type":"sample.shop.ShippingCalculator","method":"quote","arguments":"Customer@73581df4 \"Customer[id=order-2, name=customer-order-2, address=null]\""},{"seq":9,"kind":"enter","depth":3,"offsetNanos":547625,"type":"sample.shop.Customer","method":"address","arguments":""},{"seq":10,"kind":"return","depth":3,"offsetNanos":548541,"type":"sample.shop.Customer","method":"address","returned":"null"},{"seq":11,"kind":"throw","depth":2,"offsetNanos":618000,"type":"sample.shop.ShippingCalculator","method":"quote","thrown":"NullPointerException: (115) \"Cannot invoke \\\"sample.shop.Address.postcode()\\\" because the retur...\""},{"seq":12,"kind":"throw","depth":1,"offsetNanos":625541,"type":"sample.shop.CheckoutService","method":"checkout","thrown":"NullPointerException: (115) \"Cannot invoke \\\"sample.shop.Address.postcode()\\\" because the retur...\""},{"seq":13,"kind":"throw","depth":0,"offsetNanos":631041,"type":"sample.shop.CheckoutController","method":"checkout","thrown":"NullPointerException: (115) \"Cannot invoke \\\"sample.shop.Address.postcode()\\\" because the retur...\""}]}</script>
 
 <script>
 "use strict";
@@ -164,6 +164,13 @@
 // The one version of the trace format this viewer understands. A reader that guesses at a document
 // it does not recognise produces a confident wrong answer, which is worse than refusing.
 var SCHEMA = "hindsight.trace/1";
+
+/*
+ * A row per event, and a browser will not build a million of them. The agent caps a buffer at
+ * 65,536 events per thread, so a trace can legitimately be far larger than is worth drawing at
+ * once; beyond this the tail is what matters anyway, because that is where the failure is.
+ */
+var MAX_ROWS = 5000;
 
 var state = { events: [], frames: [], index: 0 };
 
@@ -314,6 +321,16 @@ function renderWarnings() {
   if (truncation.beyondMaxDepth > 0) {
     lost.push(truncation.beyondMaxDepth + " events were deeper than the configured depth limit");
   }
+  if (truncation.unbalancedExits > 0) {
+    // The recorder saw a frame end that it never saw begin, so the tree is missing a branch it
+    // cannot draw and cannot describe.
+    lost.push(truncation.unbalancedExits + " frames ended without the recorder having seen them "
+      + "start, so some of the tree is missing entirely");
+  }
+  if (state.events.length > MAX_ROWS) {
+    lost.push("only the last " + MAX_ROWS + " of " + state.events.length
+      + " events are drawn, because that is as many rows as a page can usefully hold");
+  }
   if (lost.length) {
     // A truncated recording that does not say so reads as a complete account of what happened.
     box.appendChild(text("div", "notice warn",
@@ -328,7 +345,10 @@ function renderTree() {
     tree.appendChild(text("div", "empty", "This trace contains no events."));
     return;
   }
-  state.events.forEach(function (event, index) {
+  // The end of a recording is the part worth having: whatever went wrong is at the bottom.
+  var from = Math.max(0, state.events.length - MAX_ROWS);
+  state.events.slice(from).forEach(function (event, offset) {
+    var index = from + offset;
     var row = text("div", "row " + event.kind);
     row.dataset.index = String(index);
     row.appendChild(text("span", "at", millis(event.offsetNanos).padStart(9)));
@@ -389,11 +409,14 @@ function select(index) {
   if (!state.events.length) { return; }
   state.index = Math.min(Math.max(index, 0), state.events.length - 1);
 
+  // Rows may start part way into the recording when it is too long to draw in full, so the row for
+  // an event is not simply the event's own index.
+  var from = Math.max(0, state.events.length - MAX_ROWS);
   var rows = el("tree").children;
   for (var i = 0; i < rows.length; i++) {
-    rows[i].classList.toggle("selected", i === state.index);
+    rows[i].classList.toggle("selected", i === state.index - from);
   }
-  var selected = rows[state.index];
+  var selected = rows[state.index - from];
   if (selected && selected.scrollIntoView) {
     selected.scrollIntoView({ block: "nearest" });
   }
