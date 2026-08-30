@@ -1,0 +1,22 @@
+#!/bin/sh
+#
+# Runs one Java file under the agent and prints what was recorded.
+#
+#   ./hindsight-run Orders.java
+#   ./hindsight-run Orders.java --json > trace.json
+#
+# This is convenience, not the product. Attaching the agent to a real application is one flag:
+#
+#   java -javaagent:hindsight-agent/target/hindsight-agent.jar -Dhindsight.packages=com.example -jar yourapp.jar
+#
+set -e
+
+here=$(cd "$(dirname "$0")" && pwd)
+playground="$here/hindsight-playground/target/hindsight-playground.jar"
+
+if [ ! -f "$playground" ]; then
+  echo "hindsight-run: not built yet. Run ./mvnw package first." >&2
+  exit 3
+fi
+
+exec java -jar "$playground" "$@"

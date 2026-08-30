@@ -73,7 +73,7 @@ that surprises people in production.
 
 Both are plain HTML and JavaScript. No build step, no dependencies, nothing loaded from anywhere.
 
-Run the demo service and both are at `localhost:8080`:
+Run the demo service and all three are at `127.0.0.1:8080`:
 
 ```bash
 java -Dhindsight.packages=sample.shop -javaagent:hindsight-agent/target/hindsight-agent.jar -jar hindsight-demo/target/hindsight-demo.jar
@@ -86,6 +86,51 @@ order-1* succeeds and writes nothing, because a trace is only produced when an e
 **The trace viewer**, at `/hindsight-viewer.html` — press *Load a sample trace* to see it working
 straight away; otherwise drop a trace file on it, choose one, or paste the JSON. Arrow keys step
 through the recording, and selecting an exit shows what its frame was *entered with*.
+
+**The playground**, at `/playground.html` — paste your own class with a `main` method and run it
+under the agent. It is compiled, run in a fresh JVM, and you get the stack trace beside the
+recording.
+
+> Use `127.0.0.1`, not `localhost`. The demo binds to the IPv4 loopback address, and on macOS
+> `localhost` resolves to IPv6 `::1` first, which nothing is listening on.
+>
+> **The playground compiles and runs whatever is posted to it.** That is unavoidable for a debugger
+> playground, and on your own machine it is no different from running `javac` yourself. It is
+> something else entirely on a network, which is why the demo binds to loopback and why you should
+> leave it that way.
+
+### On your own code, without any of this
+
+The playground is a showcase. Pointing the agent at a real application is one flag and needs none
+of it:
+
+```bash
+java -javaagent:hindsight-agent/target/hindsight-agent.jar -Dhindsight.packages=com.example -jar yourapp.jar
+```
+
+For a single file there is a wrapper, which is the same engine the playground uses:
+
+```bash
+./hindsight-run Orders.java
+```
+
+```
+Exception in thread "main" java.lang.NullPointerException: Cannot invoke "Price.amount()" ...
+    at snippet.Orders.total(Orders.java:10)
+    at snippet.Orders.main(Orders.java:5)
+
+trace for main: 8 events
++  0.000ms -> snippet.Orders.main(String[0]@748741cb)
++  0.115ms   -> snippet.Orders.total(String "widget")
++  0.122ms     -> snippet.Orders.lookup(String "widget")
++  0.125ms       -> snippet.Orders.catalogue(String "widget")
++  0.129ms       <- snippet.Orders.catalogue returned null
++  0.131ms     <- snippet.Orders.lookup returned null
++  4.121ms   <! snippet.Orders.total threw NullPointerException
++  4.134ms <! snippet.Orders.main threw NullPointerException
+```
+
+`catalogue` is not in the stack trace. It had already returned.
 
 The viewer is served here for convenience, but it is still one self-contained file with no server
 requirement: `hindsight-viewer/hindsight-viewer.html` opens straight from disk and behaves
@@ -240,6 +285,7 @@ asking for `java` does not get you an instrumented `java.lang.String`.
 | `hindsight-agent` | The agent. Shaded, with Byte Buddy relocated. |
 | `hindsight-testapp` | A tiny application used as an instrumentation target by the tests. |
 | `hindsight-viewer` | One HTML file. Not a Maven module; there is nothing to build. |
+| `hindsight-playground` | Compiles and runs a snippet under the agent. Shared by `hindsight-run` and the playground page. |
 | `hindsight-benchmark` | The overhead harness and the workload it measures. |
 | `hindsight-demo` | A Spring Boot service with the planted bug, and the test that pins the claim. |
 

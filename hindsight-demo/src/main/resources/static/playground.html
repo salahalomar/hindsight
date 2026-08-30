@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hindsight playground</title>
+<style>
+  /*
+   * Same language as the console and the viewer: one monospace face, square edges, rules instead of
+   * cards, and no gradients, shadows, transitions or animation. The only hue marks a failure.
+   */
+  :root {
+    --bg: #ffffff; --ink: #111111; --dim: #767676; --faint: #a6a6a6;
+    --rule: #d9d9d9; --alert: #98241a; --mark: #f2efe6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d0d0f; --ink: #dcdad6; --dim: #83817d; --faint: #56555a;
+      --rule: #2a2a2e; --alert: #d4776a; --mark: #1c1b20;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  header { padding: 22px 26px 14px; }
+  h1 { margin: 0 0 10px; font-size: 13px; font-weight: 700; }
+  h1 span { color: var(--dim); font-weight: 400; }
+  header p { margin: 0 0 6px; max-width: 96ch; color: var(--dim); }
+  header p b { color: var(--ink); font-weight: 700; }
+  .warning { color: var(--alert); }
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 0; }
+  main { padding: 16px 26px 40px; }
+  .panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .panes > div + div { border-left: 1px solid var(--rule); padding-left: 18px; }
+  @media (max-width: 1060px) {
+    .panes { grid-template-columns: 1fr; }
+    .panes > div + div { border-left: 0; padding-left: 0; border-top: 1px solid var(--rule); padding-top: 14px; }
+  }
+  .panes > div { padding-right: 18px; }
+  h2 {
+    margin: 0; padding: 0 0 6px; font-size: 13px; font-weight: 400; color: var(--dim);
+    border-bottom: 1px solid var(--rule);
+  }
+  textarea {
+    width: 100%; height: 46vh; margin-top: 10px; padding: 10px; resize: vertical;
+    background: var(--bg); color: var(--ink); border: 1px solid var(--rule); border-radius: 0;
+    font: inherit; tab-size: 4;
+  }
+  .controls { display: flex; gap: 8px; align-items: baseline; margin-top: 10px; }
+  button {
+    font: inherit; color: var(--ink); background: transparent;
+    border: 1px solid var(--rule); border-radius: 0; padding: 4px 10px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--ink); }
+  button:disabled { color: var(--faint); cursor: default; }
+  #status { color: var(--dim); }
+  #status.bad { color: var(--alert); }
+  .result { margin-top: 10px; max-height: 62vh; overflow: auto; }
+  .label { color: var(--dim); margin: 14px 0 4px; }
+  .label:first-child { margin-top: 0; }
+  pre { margin: 0; white-space: pre; overflow-x: auto; color: var(--dim); }
+  pre.errors { color: var(--alert); white-space: pre-wrap; }
+  .row { white-space: pre; color: var(--faint); }
+  .row.birth { color: var(--ink); background: var(--mark); }
+  .row.origin::after { content: "   <- origin"; color: var(--dim); }
+  .row.throw { color: var(--alert); }
+  .empty { color: var(--faint); }
+  footer { padding: 0 26px 30px; color: var(--faint); }
+  a { color: var(--dim); }
+  a:hover { color: var(--ink); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>hindsight <span>/ playground</span></h1>
+  <p><b>A recording, not a replay.</b> Paste a Java class with a <code>main</code> method. It is
+    compiled, run in a fresh JVM with the agent attached, and whatever it did on the way to failing
+    is shown on the right. hindsight records execution, so the snippet has to actually run.</p>
+  <p class="warning">This compiles and runs whatever you paste. That is what a debugger playground
+    is. The demo binds to 127.0.0.1 for exactly this reason &mdash; never expose it on a network.</p>
+  <p>Your snippet is compiled into package <code>snippet</code>, which is the package the agent is
+    pointed at. Any <code>package</code> line you write is replaced, because a class in the default
+    package can never match a package prefix and would record nothing at all.</p>
+</header>
+<hr>
+
+<main>
+  <div class="panes">
+    <div>
+      <h2>Your code</h2>
+      <textarea id="source" spellcheck="false"></textarea>
+      <div class="controls">
+        <button id="run" type="button">run it</button>
+        <button id="reset" type="button">reset the example</button>
+        <span id="status">ready</span>
+      </div>
+    </div>
+    <div>
+      <h2>What happened</h2>
+      <div class="result" id="result"><p class="empty">Press run.</p></div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <a href="/">the demo console</a> &middot; <a href="/hindsight-viewer.html">the trace viewer</a>
+  &middot; the same engine runs from the command line as <code>./hindsight-run File.java</code>
+</footer>
+
+<script>
+"use strict";
+
+// A null returned from a frame that has already gone by the time anything dereferences it, which
+// is the case a stack trace cannot answer and the reason this project exists.
+var EXAMPLE = [
+  "public class Orders {",
+  "",
+  "    public static void main(String[] args) {",
+  "        System.out.println(\"total: \" + total(\"widget\"));",
+  "    }",
+  "",
+  "    static int total(String sku) {",
+  "        Price price = lookup(sku);",
+  "        return price.amount() * 2;      // explodes here",
+  "    }",
+  "",
+  "    static Price lookup(String sku) {",
+  "        return catalogue(sku);",
+  "    }",
+  "",
+  "    static Price catalogue(String sku) {",
+  "        return null;                    // ...but the null is born here",
+  "    }",
+  "",
+  "    record Price(int amount) { }",
+  "}"
+].join("\n");
+
+var el = function (id) { return document.getElementById(id); };
+
+function status(text, bad) {
+  el("status").textContent = text;
+  el("status").className = bad ? "bad" : "";
+}
+
+function clear() {
+  var node = el("result");
+  node.innerHTML = "";
+  return node;
+}
+
+function label(node, text) {
+  var line = document.createElement("p");
+  line.className = "label";
+  line.textContent = text;
+  node.appendChild(line);
+}
+
+function block(node, text, className) {
+  var pre = document.createElement("pre");
+  if (className) { pre.className = className; }
+  pre.textContent = text;
+  node.appendChild(pre);
+}
+
+/** The agent already rendered the tree; this only marks the line where a null was handed back. */
+function renderRecording(node, recording) {
+  var origin = false;
+  recording.split("\n").forEach(function (line) {
+    var row = document.createElement("div");
+    row.className = "row";
+    if (line.indexOf(" threw ") >= 0) { row.classList.add("throw"); }
+    if (/ returned null$/.test(line)) {
+      row.classList.add("birth");
+      if (!origin) { row.classList.add("origin"); origin = true; }
+    }
+    row.textContent = line;
+    node.appendChild(row);
+  });
+}
+
+async function run() {
+  el("run").disabled = true;
+  status("compiling and running…");
+  var node = clear();
+  try {
+    var response = await fetch("/api/playground", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: el("source").value })
+    });
+    var result = await response.json();
+
+    if (result.compileErrors) {
+      status("did not compile", true);
+      label(node, "The compiler said:");
+      block(node, result.compileErrors.join("\n"), "errors");
+      return;
+    }
+    if (!result.ok) {
+      status("could not run", true);
+      block(node, result.problem, "errors");
+      return;
+    }
+
+    status(result.exitCode === 0 ? "ran, exit 0" : "ran, exit " + result.exitCode,
+           result.exitCode !== 0);
+
+    if (result.output) {
+      label(node, "What the snippet printed, including the stack trace if it failed:");
+      block(node, result.output);
+    }
+    if (result.recording) {
+      label(node, "What hindsight recorded:");
+      renderRecording(node, result.recording);
+    } else {
+      label(node, "Nothing failed, so nothing was recorded. A trace is kept when an exception "
+        + "escapes; until then there is nothing to look at.");
+    }
+  } catch (failure) {
+    status("failed", true);
+    block(clear(), String(failure), "errors");
+  } finally {
+    el("run").disabled = false;
+  }
+}
+
+el("source").value = EXAMPLE;
+el("run").addEventListener("click", run);
+el("reset").addEventListener("click", function () {
+  el("source").value = EXAMPLE;
+  clear().innerHTML = "<p class=\"empty\">Press run.</p>";
+  status("ready");
+});
+</script>
+</body>
+</html>

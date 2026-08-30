@@ -35,6 +35,13 @@
       <artifactId>spring-boot-starter-web</artifactId>
     </dependency>
 
+    <!-- The same engine the hindsight-run command uses, so the two cannot demonstrate different things. -->
+    <dependency>
+      <groupId>dev.hindsight</groupId>
+      <artifactId>hindsight-playground</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
