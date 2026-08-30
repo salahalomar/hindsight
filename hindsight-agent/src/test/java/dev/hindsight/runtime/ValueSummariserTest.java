@@ -189,6 +189,30 @@ class ValueSummariserTest {
         }
 
         @Test
+        @DisplayName("a character is never cut in half")
+        void neverSplitsASurrogatePair() {
+            // The cap is sixteen UTF-16 units, and this puts the emoji's two halves at units 15
+            // and 16, so a naive cut keeps the first half alone. A lone high surrogate is not a
+            // character: the UTF-8 encoder writes it as '?', corrupting exactly the character at
+            // the boundary somebody is squinting at.
+            String summary = summariser.summarise("a".repeat(15) + "\uD83D\uDE00" + "zzz");
+
+            assertFalse(summary.contains("?"), summary);
+            assertEquals("String (20) \"" + "a".repeat(15) + "...\"", summary);
+        }
+
+        @Test
+        @DisplayName("a character that fits entirely is kept entirely")
+        void keepsACompleteCharacterAtTheLimit() {
+            // Here the pair occupies units 15 and 16, ending exactly on the cap, so it survives.
+            String summary = summariser.summarise("a".repeat(14) + "\uD83D\uDE00" + "zz");
+
+            assertTrue(summary.contains("\uD83D\uDE00"), summary);
+            assertFalse(summary.contains("?"), summary);
+            assertEquals("String (18) \"" + "a".repeat(14) + "\uD83D\uDE00...\"", summary);
+        }
+
+        @Test
         @DisplayName("an overridden toString is capped like any other text")
         void toStringIsCappedToo() {
             String summary = summariser.summarise(new Described("x".repeat(200)));

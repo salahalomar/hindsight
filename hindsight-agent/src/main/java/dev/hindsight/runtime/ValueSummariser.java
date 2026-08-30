@@ -219,9 +219,19 @@ public final class ValueSummariser {
         if (text.length() <= maxLength) {
             return "\"" + escape(text) + "\"";
         }
+        /*
+         * maxLength counts UTF-16 code units, so a cut can land between the halves of a surrogate
+         * pair and leave a lone high surrogate. That is not a character: the UTF-8 encoder writes
+         * it out as '?', which corrupts precisely the character at the boundary somebody is
+         * squinting at. Keeping whole characters costs one comparison.
+         */
+        int cut = maxLength;
+        if (Character.isHighSurrogate(text.charAt(cut - 1))) {
+            cut--;
+        }
         // A cut value says how long it really was, so the truncation cannot be mistaken for the
         // value having ended there.
-        return "(" + text.length() + ") \"" + escape(text.substring(0, maxLength)) + ELLIPSIS + "\"";
+        return "(" + text.length() + ") \"" + escape(text.substring(0, cut)) + ELLIPSIS + "\"";
     }
 
     private static String escape(String text) {

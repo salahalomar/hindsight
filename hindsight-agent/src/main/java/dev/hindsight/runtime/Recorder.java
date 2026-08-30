@@ -52,9 +52,25 @@ public final class Recorder {
     private Recorder() {
     }
 
-    /** Called once from {@code premain}, before any application class has been instrumented. */
+    /**
+     * Called once from {@code premain}, before any application class has been instrumented.
+     *
+     * <p>Validates eagerly, because the alternative is silent. {@link RingBuffer} rejects a
+     * capacity that is not a power of two, and it is constructed inside a {@link ThreadLocal}
+     * initialiser reached from the recording path, where every throwable is swallowed by design.
+     * A bad value would therefore produce an agent that attaches, prints a normal banner,
+     * instruments everything and records nothing at all, with no diagnostic anywhere. Failing here
+     * is loud and happens once, at startup.
+     *
+     * @throws IllegalArgumentException if the settings could never produce a usable buffer
+     */
     public static void configure(int bufferEvents, int maxDepth, boolean dump,
                                  ValueSummariser summariser, TraceWriter traceWriter) {
+        // Constructed and discarded purely to reject bad settings where somebody will see it.
+        new RingBuffer(bufferEvents, maxDepth);
+        if (summariser == null) {
+            throw new IllegalArgumentException("a summariser is required");
+        }
         Recorder.bufferEvents = bufferEvents;
         Recorder.maxDepth = maxDepth;
         Recorder.dump = dump;
