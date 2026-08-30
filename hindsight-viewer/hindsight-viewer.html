@@ -5,112 +5,110 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>hindsight trace viewer</title>
 <style>
+  /*
+   * Deliberately plain, and matching the demo console. This is a debugger: everything it shows is
+   * code, so it is set in one monospace face, on square edges, with rules instead of cards. The
+   * only hue in the page marks a thrown exception; nothing else is coloured, because an arrow
+   * already says whether a frame was entered or left. Emphasis is contrast: the trace is dimmed
+   * and the selected line is left at full strength.
+   *
+   * No gradients, shadows, transitions or animation. Nothing here moves unless the reader moves it.
+   */
   :root {
-    --bg: #fbfbfa; --panel: #ffffff; --line: #e3e1dd; --ink: #1c1b19; --muted: #6b6862;
-    --enter: #2f6f4f; --return: #3a5b8c; --throw: #a3372c; --accent: #8a6d2f;
-    --selected: #f0ece2; --warn-bg: #fdf6e3; --warn-line: #d9c98f;
+    --bg: #ffffff; --ink: #111111; --dim: #767676; --faint: #a6a6a6;
+    --rule: #d9d9d9; --alert: #98241a; --mark: #f2efe6;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #16151a; --panel: #1d1c22; --line: #33313a; --ink: #e8e6e3; --muted: #9a968f;
-      --enter: #7fc4a0; --return: #8fb3e0; --throw: #e58b7e; --accent: #d4b46a;
-      --selected: #2a2833; --warn-bg: #2a2416; --warn-line: #6b5a2a;
+      --bg: #0d0d0f; --ink: #dcdad6; --dim: #83817d; --faint: #56555a;
+      --rule: #2a2a2e; --alert: #d4776a; --mark: #1c1b20;
     }
   }
   * { box-sizing: border-box; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
-    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   }
-  code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  header { padding: 20px 24px 16px; border-bottom: 1px solid var(--line); }
-  h1 { margin: 0; font-size: 20px; letter-spacing: -0.01em; }
-  h1 span { color: var(--muted); font-weight: 400; }
-  .premise {
-    margin: 8px 0 0; max-width: 70ch; color: var(--muted); font-size: 13px;
-    border-left: 3px solid var(--accent); padding-left: 10px;
-  }
-  .premise b { color: var(--ink); }
-  main { padding: 20px 24px 32px; }
-  .loader {
-    border: 1px dashed var(--line); border-radius: 8px; padding: 20px; background: var(--panel);
-  }
-  .loader.over { border-color: var(--accent); background: var(--selected); }
-  .loader h2 { margin: 0 0 4px; font-size: 14px; }
-  .loader p { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+  header { padding: 22px 26px 14px; }
+  h1 { margin: 0 0 10px; font-size: 13px; font-weight: 700; }
+  h1 span { color: var(--dim); font-weight: 400; }
+  .premise { margin: 0; max-width: 92ch; color: var(--dim); }
+  .premise b { color: var(--ink); font-weight: 700; }
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 0; }
+  main { padding: 16px 26px 40px; }
+  .loader { max-width: 92ch; }
+  .loader.over { background: var(--mark); }
+  .loader h2 { margin: 0 0 6px; font-size: 13px; font-weight: 700; }
+  .loader p { margin: 0 0 12px; color: var(--dim); }
+  .sample { margin: 12px 0 0; color: var(--faint); max-width: 92ch; }
   textarea {
-    width: 100%; min-height: 84px; margin-top: 10px; padding: 8px; resize: vertical;
-    background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;
+    width: 100%; min-height: 76px; margin-top: 12px; padding: 8px; resize: vertical;
+    background: var(--bg); color: var(--ink); border: 1px solid var(--rule); border-radius: 0;
+    font: inherit;
   }
   button, .filebutton {
-    font: inherit; padding: 6px 12px; border-radius: 6px; cursor: pointer;
-    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    font: inherit; color: var(--ink); background: transparent; display: inline-block;
+    border: 1px solid var(--rule); border-radius: 0; padding: 4px 10px; cursor: pointer;
   }
-  button:hover:not(:disabled), .filebutton:hover { border-color: var(--accent); }
-  button:disabled { opacity: 0.4; cursor: default; }
+  button:hover:not(:disabled), .filebutton:hover { border-color: var(--ink); }
+  button:disabled { color: var(--faint); cursor: default; }
   input[type=file] { display: none; }
-  .notice { padding: 10px 12px; border-radius: 6px; margin-bottom: 14px; font-size: 13px; }
-  .notice.error { background: var(--warn-bg); border: 1px solid var(--throw); color: var(--throw); }
-  .notice.warn { background: var(--warn-bg); border: 1px solid var(--warn-line); }
+  .notice { padding: 8px 0; margin-bottom: 12px; }
+  .notice.error { color: var(--alert); }
+  .notice.warn { color: var(--dim); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
   .meta {
-    display: flex; flex-wrap: wrap; gap: 6px 22px; margin-bottom: 14px;
-    padding-bottom: 12px; border-bottom: 1px solid var(--line); font-size: 13px;
+    display: flex; flex-wrap: wrap; gap: 4px 26px; margin-bottom: 14px;
+    padding-bottom: 12px; border-bottom: 1px solid var(--rule); color: var(--dim);
   }
-  .meta div { color: var(--muted); }
-  .meta b { color: var(--ink); font-weight: 600; }
-  .panes { display: grid; grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr); gap: 16px; }
-  @media (max-width: 860px) { .panes { grid-template-columns: 1fr; } }
-  .pane {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+  .meta b { color: var(--ink); font-weight: 400; }
+  .panes { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 4fr); }
+  .panes > .pane + .pane { border-left: 1px solid var(--rule); padding-left: 18px; }
+  @media (max-width: 1000px) {
+    .panes { grid-template-columns: 1fr; }
+    .panes > .pane + .pane { border-left: 0; padding-left: 0; border-top: 1px solid var(--rule); padding-top: 14px; }
   }
+  .pane { padding-right: 18px; }
   .pane > h2 {
-    margin: 0; padding: 8px 12px; font-size: 12px; text-transform: uppercase;
-    letter-spacing: 0.06em; color: var(--muted); border-bottom: 1px solid var(--line);
+    margin: 0; padding: 0 0 6px; font-size: 13px; font-weight: 400; color: var(--dim);
+    border-bottom: 1px solid var(--rule);
   }
-  #tree { max-height: 58vh; overflow: auto; }
-  .row {
-    display: flex; gap: 10px; padding: 3px 12px; cursor: pointer; white-space: pre;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px;
-  }
-  .row:hover { background: var(--selected); }
-  .row.selected { background: var(--selected); box-shadow: inset 3px 0 0 var(--accent); }
-  .row .at { color: var(--muted); flex: 0 0 auto; }
+  #tree { max-height: 56vh; overflow: auto; padding-top: 8px; }
+  .row { display: flex; gap: 12px; padding: 1px 0; cursor: pointer; white-space: pre; color: var(--faint); }
+  .row:hover { color: var(--dim); }
+  .row.selected { color: var(--ink); background: var(--mark); }
+  .row .at { flex: 0 0 auto; }
   .row .body { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
-  .row .took { color: var(--muted); flex: 0 0 auto; }
-  .enter .arrow { color: var(--enter); }
-  .return .arrow { color: var(--return); }
-  .throw .arrow, .throw .body { color: var(--throw); }
-  .inspector { padding: 12px; }
-  .inspector dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; }
-  .inspector dt { color: var(--muted); font-size: 12px; }
+  .row .took { flex: 0 0 auto; }
+  .row.throw { color: var(--alert); }
+  .inspector { padding-top: 10px; }
+  .inspector dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; }
+  .inspector dt { color: var(--dim); }
   .inspector dd { margin: 0; word-break: break-word; }
-  .inspector h3 {
-    margin: 14px 0 4px; font-size: 12px; text-transform: uppercase;
-    letter-spacing: 0.06em; color: var(--muted);
-  }
+  .inspector h3 { margin: 14px 0 4px; font-size: 13px; font-weight: 400; color: var(--dim); }
   .inspector pre {
-    margin: 0; padding: 8px; background: var(--bg); border: 1px solid var(--line);
-    border-radius: 6px; overflow-x: auto; font-size: 12.5px;
+    margin: 0; padding: 8px; background: var(--mark); border: 1px solid var(--rule);
+    border-radius: 0; overflow-x: auto;
   }
-  .empty { padding: 12px; color: var(--muted); }
-  .scrub { margin-top: 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .scrub input[type=range] { flex: 1 1 240px; accent-color: var(--accent); }
-  .scrub .pos { color: var(--muted); font-size: 13px; min-width: 12ch; }
-  .hint { margin-top: 8px; color: var(--muted); font-size: 12px; }
-  footer { padding: 0 24px 28px; color: var(--muted); font-size: 12px; }
+  .empty { color: var(--faint); }
+  .scrub { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rule);
+           display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .scrub input[type=range] { flex: 1 1 240px; accent-color: var(--ink); }
+  .scrub .pos { color: var(--dim); min-width: 12ch; }
+  .hint { margin-top: 10px; color: var(--faint); }
+  footer { padding: 0 26px 30px; color: var(--faint); }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>hindsight <span>trace viewer</span></h1>
+  <h1>hindsight <span>/ trace viewer</span></h1>
   <p class="premise">
     <b>A recording, not a replay.</b> Nothing here is re-executed. These are the values that were
     actually observed as the program ran, and stepping backwards moves through what was recorded
     &mdash; it does not undo anything or restore any state.
   </p>
 </header>
+<hr>
 
 <main>
   <section id="loader" class="loader">
@@ -118,8 +116,11 @@
     <p>Drop a <code>hindsight-*.json</code> file here, choose one, or paste its contents. Everything
       happens in this page; nothing is uploaded anywhere.</p>
     <label class="filebutton">Choose file&hellip;<input id="file" type="file" accept=".json,application/json"></label>
+    <button id="loadSample" type="button">Load a sample trace</button>
     <textarea id="paste" placeholder="...or paste the JSON here and press Load"></textarea>
     <div style="margin-top:8px"><button id="loadPasted" type="button">Load pasted JSON</button></div>
+    <p class="sample">The sample is a real recording from <code>hindsight-demo</code>: a checkout
+      request that fails because an address lookup returned null three frames earlier.</p>
   </section>
 
   <section id="problem" hidden></section>
@@ -154,6 +155,8 @@
 </main>
 
 <footer>hindsight &mdash; a time-travel debugger for the JVM. Reads <code>hindsight.trace/1</code>.</footer>
+
+<script type="application/json" id="sample-trace">{"schema":"hindsight.trace/1","agent":"0.1.0-SNAPSHOT","recordedAt":"2026-08-30T09:47:43.139104Z","thread":"http-nio-8080-exec-1","entryPoint":{"type":"sample.shop.CheckoutController","method":"checkout"},"truncation":{"droppedToRing":0,"beyondMaxDepth":0},"events":[{"seq":0,"kind":"enter","depth":0,"offsetNanos":0,"type":"sample.shop.CheckoutController","method":"checkout","arguments":"String \"order-2\""},{"seq":1,"kind":"enter","depth":1,"offsetNanos":5166,"type":"sample.shop.CheckoutService","method":"checkout","arguments":"String \"order-2\""},{"seq":2,"kind":"enter","depth":2,"offsetNanos":9041,"type":"sample.shop.CustomerRepository","method":"findById","arguments":"String \"order-2\""},{"seq":3,"kind":"enter","depth":3,"offsetNanos":34250,"type":"sample.shop.CustomerRepository","method":"nameFor","arguments":"String \"order-2\""},{"seq":4,"kind":"return","depth":3,"offsetNanos":56666,"type":"sample.shop.CustomerRepository","method":"nameFor","returned":"String \"customer-order-2\""},{"seq":5,"kind":"enter","depth":3,"offsetNanos":60583,"type":"sample.shop.AddressBook","method":"addressFor","arguments":"String \"order-2\""},{"seq":6,"kind":"return","depth":3,"offsetNanos":64083,"type":"sample.shop.AddressBook","method":"addressFor","returned":"null"},{"seq":7,"kind":"return","depth":2,"offsetNanos":449750,"type":"sample.shop.CustomerRepository","method":"findById","returned":"Customer@22232989 \"Customer[id=order-2, name=customer-order-2, address=null]\""},{"seq":8,"kind":"enter","depth":2,"offsetNanos":466583,"type":"sample.shop.ShippingCalculator","method":"quote","arguments":"Customer@22232989 \"Customer[id=order-2, name=customer-order-2, address=null]\""},{"seq":9,"kind":"enter","depth":3,"offsetNanos":468375,"type":"sample.shop.Customer","method":"address","arguments":""},{"seq":10,"kind":"return","depth":3,"offsetNanos":469458,"type":"sample.shop.Customer","method":"address","returned":"null"},{"seq":11,"kind":"throw","depth":2,"offsetNanos":536875,"type":"sample.shop.ShippingCalculator","method":"quote","thrown":"NullPointerException: (115) \"Cannot invoke \\\"sample.shop.Address.postcode()\\\" because the retur...\""},{"seq":12,"kind":"throw","depth":1,"offsetNanos":544541,"type":"sample.shop.CheckoutService","method":"checkout","thrown":"NullPointerException: (115) \"Cannot invoke \\\"sample.shop.Address.postcode()\\\" because the retur...\""},{"seq":13,"kind":"throw","depth":0,"offsetNanos":552041,"type":"sample.shop.CheckoutController","method":"checkout","thrown":"NullPointerException: (115) \"Cannot invoke \\\"sample.shop.Address.postcode()\\\" because the retur...\""}]}</script>
 
 <script>
 "use strict";
@@ -328,7 +331,7 @@ function renderTree() {
   state.events.forEach(function (event, index) {
     var row = text("div", "row " + event.kind);
     row.dataset.index = String(index);
-    row.appendChild(text("span", "at", millis(event.offsetNanos).padStart(10)));
+    row.appendChild(text("span", "at", millis(event.offsetNanos).padStart(9)));
 
     var body = text("span", "body");
     body.appendChild(text("span", "arrow", "  ".repeat(event.depth) + signatureOf(event).slice(0, 2)));
@@ -414,6 +417,11 @@ el("file").addEventListener("change", function (change) {
   reader.onload = function () { load(String(reader.result)); };
   reader.onerror = function () { problem("That file could not be read."); };
   reader.readAsText(chosen);
+});
+
+el("loadSample").addEventListener("click", function () {
+  // Embedded in the page rather than fetched, so it works from a local file with no server.
+  load(el("sample-trace").textContent);
 });
 
 el("loadPasted").addEventListener("click", function () {

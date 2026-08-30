@@ -19,6 +19,7 @@ import java.util.Locale;
 import java.util.TreeSet;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -126,6 +127,30 @@ class ViewerContractTest {
         // stylesheet reference and it silently renders as unstyled text at exactly the wrong moment.
         assertFalse(viewer().contains(forbidden),
                 "the viewer references something external: " + forbidden);
+    }
+
+    @Test
+    @DisplayName("the sample the viewer ships is a trace this agent could have written")
+    void theEmbeddedSampleIsStillValid() throws IOException {
+        // The one-click sample is a real recording pasted into the page, so nothing regenerates it
+        // when the format changes. Without this it would quietly become a trace the viewer refuses.
+        String viewer = viewer();
+        int start = viewer.indexOf("id=\"sample-trace\">");
+        assertTrue(start > 0, "the viewer no longer ships a sample trace");
+        start = viewer.indexOf('>', start) + 1;
+        String sample = viewer.substring(start, viewer.indexOf("</script>", start));
+
+        JsonNode parsed = new ObjectMapper().readTree(sample);
+        assertEquals(TraceSerialiser.SCHEMA, parsed.get("schema").asText(),
+                "the embedded sample is from an older schema and the viewer would refuse it");
+
+        Set<String> emitted = new TreeSet<>();
+        collectFieldNames(sampleTrace(), emitted);
+        Set<String> inSample = new TreeSet<>();
+        collectFieldNames(parsed, inSample);
+        assertTrue(inSample.containsAll(emitted),
+                "the sample is missing fields the serialiser now emits: "
+                        + new TreeSet<>(emitted) { { removeAll(inSample); } });
     }
 
     @Test
