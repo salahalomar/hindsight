@@ -267,13 +267,14 @@ reported and replaced with the default; the agent never refuses to start over on
 | Property | Default | |
 |---|---|---|
 | `hindsight.packages` | *(none)* | Comma-separated package prefixes to record. Nothing is recorded until this is set. |
-| `hindsight.buffer.events` | `1024` | Events held per thread, rounded up to a power of two. Roughly 38KB per traced thread at the default. |
-| `hindsight.depth.max` | `256` | Call depth past which frames are counted but not stored. |
+| `hindsight.buffer.events` | `1024` | Events held per thread, rounded up to a power of two, capped at 65,536. Roughly 38KB per traced thread at the default. |
+| `hindsight.depth.max` | `256` | Call depth past which frames are counted but not stored. Capped at 4,096. |
 | `hindsight.values` | `summary` | `summary` renders values; `type` reports type names and calls nothing belonging to the application. |
 | `hindsight.value.length` | `64` | Characters kept per rendered value. A value that was cut reports its real length. |
 | `hindsight.dump` | `false` | Print each completed outermost frame as a call tree. |
 | `hindsight.trace.dir` | `hindsight-traces` | Where trace files are written. |
 | `hindsight.trace.max` | `50` | Trace files per JVM run. `0` switches tracing off. |
+| `hindsight.debug` | `false` | Count every class the JVM loads and report the total at shutdown. A setup aid, not something to leave on. |
 
 `hindsight.packages` chooses what the agent *may* record. It never overrides the exclusion list:
 asking for `java` does not get you an instrumented `java.lang.String`.
