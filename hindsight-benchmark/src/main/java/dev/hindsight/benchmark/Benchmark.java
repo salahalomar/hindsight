@@ -49,7 +49,16 @@ public final class Benchmark {
     }
 
     public static void main(String[] args) throws Exception {
-        Options options = Options.parse(args);
+        Options options;
+        try {
+            options = Options.parse(args);
+        } catch (IllegalArgumentException badArguments) {
+            System.err.println(badArguments.getMessage());
+            System.err.println("usage: hindsight-benchmark [--agent <jar>] [--jar <jar>] "
+                    + "[--warmup n] [--requests n] [--forks n]");
+            System.exit(2);
+            return;
+        }
         if (options.child != null) {
             child(options);
         } else {
@@ -356,17 +365,44 @@ public final class Benchmark {
             int forks = 5;
             for (int i = 0; i < args.length; i++) {
                 switch (args[i]) {
-                    case "--child" -> child = args[++i];
+                    case "--child" -> child = value(args, ++i);
                     case "--probe" -> probe = true;
-                    case "--agent" -> agent = args[++i];
-                    case "--jar" -> jar = args[++i];
-                    case "--warmup" -> warmup = Integer.parseInt(args[++i]);
-                    case "--requests" -> requests = Integer.parseInt(args[++i]);
-                    case "--forks" -> forks = Integer.parseInt(args[++i]);
+                    case "--agent" -> agent = value(args, ++i);
+                    case "--jar" -> jar = value(args, ++i);
+                    case "--warmup" -> warmup = number(args, ++i);
+                    case "--requests" -> requests = number(args, ++i);
+                    case "--forks" -> forks = number(args, ++i);
                     default -> throw new IllegalArgumentException("unknown argument: " + args[i]);
                 }
             }
+            // Checked here rather than discovered in the middle of collating, after somebody has
+            // waited for a run that was never going to produce a number.
+            atLeastOne(warmup, "--warmup");
+            atLeastOne(requests, "--requests");
+            atLeastOne(forks, "--forks");
             return new Options(child, probe, agent, jar, warmup, requests, forks);
+        }
+
+        private static String value(String[] args, int index) {
+            if (index >= args.length) {
+                throw new IllegalArgumentException(args[index - 1] + " needs a value");
+            }
+            return args[index];
+        }
+
+        private static int number(String[] args, int index) {
+            String value = value(args, index);
+            try {
+                return Integer.parseInt(value);
+            } catch (NumberFormatException notANumber) {
+                throw new IllegalArgumentException(args[index - 1] + " needs a number, not " + value);
+            }
+        }
+
+        private static void atLeastOne(int value, String flag) {
+            if (value < 1) {
+                throw new IllegalArgumentException(flag + " must be at least 1, not " + value);
+            }
         }
     }
 }
