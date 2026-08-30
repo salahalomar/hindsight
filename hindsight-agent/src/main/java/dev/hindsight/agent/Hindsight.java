@@ -58,12 +58,21 @@ public final class Hindsight {
             // Before anything reaches Byte Buddy, including any static initialiser of this class.
             useSafeByteBuddyMode();
 
-            ClassCounter counter = ClassCounter.installOn(instrumentation);
-            Runtime.getRuntime().addShutdownHook(new SummaryHook(counter));
-
             AgentConfig config = AgentConfig.fromSystemProperties(new Warning());
             log("agent loaded - " + version() + " on JVM " + System.getProperty("java.version"));
             log(config.describe());
+
+            /*
+             * Counting every class the JVM loads answers one question -- is the agent seeing my
+             * code at all -- and that question is worth asking once, while setting the agent up.
+             * Leaving it on put a transformer in front of every class load for the life of the
+             * process and printed a line into the application's own log that nobody operating that
+             * application could interpret, in exchange for nothing. It is now asked for.
+             */
+            if (config.debug()) {
+                ClassCounter counter = ClassCounter.installOn(instrumentation);
+                Runtime.getRuntime().addShutdownHook(new SummaryHook(counter));
+            }
 
             if (config.scope().isEmpty()) {
                 // Attaching and instrumenting nothing is a legitimate state, but a silent one is

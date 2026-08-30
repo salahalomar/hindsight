@@ -20,9 +20,9 @@ class AgentAttachIT {
             "\\[hindsight] (\\d+) class(?:es)? loaded since attach, (\\d+) excluded, (\\d+) candidate");
 
     @Test
-    @DisplayName("the agent attaches and reports classes it could instrument")
-    void attachesAndObservesClassLoading() throws Exception {
-        ForkedJvm.Result result = ForkedJvm.runWithAgent();
+    @DisplayName("the class counter reports what it saw, when asked for")
+    void countsClassesWhenDebuggingIsAskedFor() throws Exception {
+        ForkedJvm.Result result = ForkedJvm.runWithAgent("-Dhindsight.debug=true");
 
         assertEquals(0, result.exitCode(), "the application exited abnormally:\n" + result);
         assertTrue(result.stdout().contains("[hindsight] agent loaded"), result.toString());
@@ -31,6 +31,19 @@ class AgentAttachIT {
         assertTrue(summary.find(), "no summary line was printed:\n" + result);
         assertTrue(Long.parseLong(summary.group(3)) >= 1,
                 "the transformer ran but the JVM never offered it an application class:\n" + result);
+    }
+
+    @Test
+    @DisplayName("an agent nobody asked to count classes does not count them")
+    void staysQuietByDefault() throws Exception {
+        ForkedJvm.Result result = ForkedJvm.runWithAgent();
+
+        // Counting every class the JVM loads is a setup question, useful once. Left on it put a
+        // transformer in front of every class load and printed a line into the application's own
+        // log that nobody operating it could interpret.
+        assertFalse(SUMMARY.matcher(result.stdout()).find(),
+                "the class counter ran without being asked:\n" + result);
+        assertTrue(result.stdout().contains("hello from testapp"), result.toString());
     }
 
     @Test

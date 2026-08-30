@@ -118,6 +118,35 @@ class AgentConfigTest {
     }
 
     @Test
+    @DisplayName("the depth limit is bounded like every other setting")
+    void boundsTheDepthLimit() {
+        // Left unbounded, a mistyped value made the renderer build a multi-megabyte indent for a
+        // single line. Every other setting here had a ceiling; this one was the exception.
+        assertEquals(AgentConfig.MAX_MAX_DEPTH,
+                configure(AgentConfig.MAX_DEPTH, String.valueOf(Integer.MAX_VALUE)).maxDepth());
+        assertEquals(1, warnings.size(), warnings.toString());
+    }
+
+    @Test
+    @DisplayName("the buffer ceiling stays inside what a reader can open")
+    void boundsTheBufferToSomethingReadable() {
+        AgentConfig config = configure(AgentConfig.BUFFER_EVENTS, "99999999");
+
+        assertEquals(AgentConfig.MAX_BUFFER_EVENTS, config.bufferEvents());
+        assertTrue(config.bufferEvents() <= 1 << 16,
+                "a buffer larger than this produces a trace nothing in this project can open");
+    }
+
+    @Test
+    @DisplayName("the class counter is something you ask for")
+    void debugIsOffByDefault() {
+        assertFalse(configure().debug());
+        assertFalse(configure().describe().contains("debug"));
+        assertTrue(configure(AgentConfig.DEBUG, "true").debug());
+        assertTrue(configure(AgentConfig.DEBUG, "true").describe().contains("debug=true"));
+    }
+
+    @Test
     @DisplayName("what was asked for is read back")
     void readsConfiguredValues() {
         AgentConfig config = configure(
